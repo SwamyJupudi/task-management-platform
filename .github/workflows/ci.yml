@@ -1,0 +1,79 @@
+name: CI
+
+# Push -> install -> lint -> test -> build.
+# The deploy stage is intentionally absent: no cloud provider has been chosen
+# yet, and inventing one would put an unreviewed decision into the pipeline.
+# It is added in the delivery phase.
+
+on:
+  push:
+    branches: [main, develop, "feature/**", "bugfix/**", "hotfix/**"]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      # Integration tests use Testcontainers and skip themselves when Docker is
+      # missing. On CI that would turn a real gap into a silent pass, so the
+      # runner is checked before anything else.
+      - name: Verify Docker is available for Testcontainers
+        run: docker info > /dev/null
+
+      - name: Install dependencies
+        run: ./mvnw -B -ntp dependency:go-offline
+
+      - name: Lint
+        run: ./mvnw -B -ntp spotless:check
+
+      - name: Test and build
+        run: ./mvnw -B -ntp verify
+
+      - name: Confirm integration tests actually ran
+        run: |
+          if ! ls target/failsafe-reports/*.xml > /dev/null 2>&1; then
+            echo "No integration test reports were produced." >&2
+            exit 1
+          fi
+          if grep -l 'tests="0"' target/failsafe-reports/*.xml | grep -q .; then
+            echo "Integration tests were skipped. Docker is likely unavailable." >&2
+            exit 1
+          fi
+
+      - name: Upload build artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-jar
+          path: target/*.jar
+          retention-days: 7
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
+          retention-days: 7
