@@ -18,11 +18,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.company.taskmanagementplatform.common.error.ErrorCode;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
-
-import tools.jackson.databind.json.JsonMapper;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.users.UserAccount;
 import com.company.taskmanagementplatform.workspaces.dto.WorkspaceResponse;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Role-based access inside a workspace, and the boundary around it.

@@ -20,10 +20,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
-
-import tools.jackson.databind.json.JsonMapper;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.users.UserAccount;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Seeing and ending your own sessions, which is the visible half of token management.

@@ -5,10 +5,10 @@ workflows, and reporting. Requirements live in
 [`docs/project-requirements.pdf`](docs/project-requirements.pdf), which is the
 source of truth for scope.
 
-**Current state: identity phase.** The shared infrastructure is in place, and so
-are accounts, authentication, and role-based authorization scoped to a
-workspace. Teams, projects and tasks do not exist yet. See
-[Project status](#project-status).
+**Current state: workspace and teams phase.** The shared infrastructure is in
+place, and so are accounts, authentication, role-based authorization scoped to a
+workspace, workspace settings and lifecycle, and teams. Projects and tasks do not
+exist yet. See [Project status](#project-status).
 
 ---
 
@@ -143,7 +143,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | ----- | ----------------------------------------- | ----------- |
 | 1     | Foundation: shared infrastructure         | Done        |
 | 2     | Identity: users, roles, authentication    | Done        |
-| 3     | Workspaces and teams                      | Not started |
+| 3     | Workspaces and teams                      | Done        |
 | 4     | Projects                                  | Not started |
 | 5     | Tasks, subtasks, dependencies, views      | Not started |
 | 6     | Comments, attachments, activity and audit | Not started |
@@ -181,11 +181,33 @@ The React frontend starts alongside phase two.
 The filter chain now refuses anything that is not on an explicit public list, and
 a test walks every mapped endpoint to prove it.
 
+### What the workspace and teams phase delivers
+
+- Workspace settings: display name, description, time zone, and the role an
+  invitation falls back to when it names none.
+- Archiving a workspace, which is reversible and freezes every change inside it
+  while leaving all of it readable.
+- Removing a workspace, which hides it and releases its slug for reuse. Platform
+  administration only, and not something a workspace administrator can do to
+  their own workspace.
+- Teams: create, edit, archive, restore and remove, scoped to one workspace.
+- Team membership, and a single team lead who is always one of the team's own
+  members.
+- Two-layer authorization over teams. A team lead may change the teams they lead;
+  an administrator holds the workspace-wide grant and reaches all of them.
+
+Somebody removed from a workspace, or whose account is deleted, is taken out of
+its teams and stood down as their lead in the same transaction. The database
+refuses the removal otherwise, so this is the step that makes it possible rather
+than tidying that could be deferred.
+
 ### What it deliberately does not deliver
 
-Teams, projects, tasks, comments, attachments, notifications and reporting. The
-`workspaces` table exists with only the columns roles and memberships need to
-reference; its settings and lifecycle belong to phase three.
+Projects, tasks, comments, attachments, notifications and reporting.
+
+Team dashboards, workload and task statistics are listed under team management in
+the requirements and are not here. They need tasks to exist, so they arrive with
+the other analytics in phase eight.
 
 There is no mail transport, no rate limiting beyond per-account lockout, and no
 cleanup of expired token rows. Each is scheduled work rather than an oversight:

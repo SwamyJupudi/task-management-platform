@@ -66,6 +66,9 @@ public class InvitationService {
         this.clock = clock;
     }
 
+    /**
+     * @param roleSlug the role to invite them into, or null to use the workspace's default role
+     */
     @Transactional
     public InvitationResponse invite(UUID workspaceId, String email, String roleSlug, UUID inviterUserId) {
         String normalized = Emails.normalize(email);
@@ -73,8 +76,7 @@ public class InvitationService {
         Workspace workspace = workspaces.findByIdAndDeletedAtIsNull(workspaceId)
                 .orElseThrow(() -> ResourceNotFoundException.of("Workspace", workspaceId));
 
-        Role role = roles.findByWorkspaceIdAndSlug(workspaceId, roleSlug)
-                .orElseThrow(() -> new BadRequestException("That role does not exist in this workspace."));
+        Role role = resolveRole(workspace, roleSlug);
 
         users.findByEmail(normalized).ifPresent(account -> {
             if (memberships.isMember(workspaceId, account.id())) {
@@ -188,6 +190,29 @@ public class InvitationService {
         return users.register(
                         invitation.getEmail(), request.password(), request.firstName(), request.lastName(), true)
                 .id();
+    }
+
+    /**
+     * The role named by the request, or the workspace's default when none was named.
+     *
+     * <p>The default is a setting rather than a constant, so an administrator who wants every new
+     * person to arrive as a team lead can say so once instead of on every invitation. A workspace
+     * always has one from the moment it is created, so the last branch is a guard against a row
+     * edited by hand rather than a case the application produces.
+     */
+    private Role resolveRole(Workspace workspace, String roleSlug) {
+        if (roleSlug != null && !roleSlug.isBlank()) {
+            return roles.findByWorkspaceIdAndSlug(workspace.getId(), roleSlug)
+                    .orElseThrow(() -> new BadRequestException("That role does not exist in this workspace."));
+        }
+
+        UUID defaultRoleId = workspace.getDefaultRoleId();
+        if (defaultRoleId == null) {
+            throw new BadRequestException("This workspace has no default role, so the invitation must name one.");
+        }
+        return roles.findByIdAndWorkspaceId(defaultRoleId, workspace.getId())
+                .orElseThrow(() ->
+                        new BadRequestException("This workspace has no default role, so the invitation must name one."));
     }
 
     private WorkspaceInvitation requireRedeemable(String rawToken) {

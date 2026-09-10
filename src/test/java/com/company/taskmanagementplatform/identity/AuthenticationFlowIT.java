@@ -22,10 +22,10 @@ import com.company.taskmanagementplatform.common.error.ErrorCode;
 import com.company.taskmanagementplatform.common.mail.MailMessage;
 import com.company.taskmanagementplatform.common.mail.MailSender;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
-
-import tools.jackson.databind.json.JsonMapper;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.support.RecordingMailSender;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /** Registration, verification, sign-in, rotation and sign-out, driven through the API. */
 class AuthenticationFlowIT extends AbstractIntegrationTest {

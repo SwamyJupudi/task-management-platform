@@ -70,6 +70,33 @@ otherwise. It also asserts the platform administrator is mapped to every
 permission, which is the standing obligation that comes with having no bypass in
 the authorization path.
 
+## The workspace and teams phase
+
+Integration tests cover the settings and lifecycle of a workspace, the whole team
+lifecycle, and the cleanup that runs when somebody leaves.
+
+`TeamSchemaIT` is the counterpart to `IdentitySchemaIT` and is written the same
+way, in SQL. The rules it exercises exist so that a mistake in the service layer
+cannot corrupt the data, so driving them through the service layer would prove
+the wrong thing. It asserts that a lead or a team member from outside the
+workspace is refused, that a team member cannot be recorded against the wrong
+workspace, that team names fold on case and space, and that removing a workspace
+member who still leads a team is refused outright.
+
+`TeamAuthorizationIT` is the one to keep honest. It exercises the two-layer rule
+rather than assuming it: a team lead is admitted for the team they lead and
+refused for one they do not, holding exactly the same permission in both cases.
+That difference is the whole purpose of `team:manage_any`, and no other test
+would notice if it disappeared.
+
+`WorkspaceRoleGrantsIT` holds `SystemRole` together with the rows a workspace
+actually receives. The grants exist twice, once in code for new workspaces and
+once in a migration's backfill for existing ones, and two workspaces created
+either side of a migration have to be able to do the same things.
+
+`MemberRemovalCascadeIT` covers the other side of the schema rules above: the
+event-driven cleanup that lets a removal succeed at all.
+
 ## Mail in tests
 
 There is no mail transport. `RecordingMailSender` captures messages so a test can

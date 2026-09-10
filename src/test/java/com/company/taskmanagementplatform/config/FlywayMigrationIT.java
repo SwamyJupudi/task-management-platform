@@ -37,10 +37,11 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
     }
 
     /**
-     * Every table the identity phase is expected to create.
+     * Every table the migrations so far are expected to create.
      *
      * <p>Listed rather than counted, so that a migration which renames a table or forgets one is a
-     * failure here rather than a surprise later.
+     * failure here rather than a surprise later. A phase that adds tables adds them here in the same
+     * commit, which is the point: the list is the record of what the schema is meant to contain.
      */
     private static final List<String> IDENTITY_TABLES = List.of(
             "permissions",
@@ -53,17 +54,21 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
             "workspace_members",
             "workspaces");
 
+    /** Added by {@code V4}, with the workspace settings and lifecycle columns. */
+    private static final List<String> TEAM_TABLES = List.of("teams", "team_members");
+
     @Test
-    void theIdentityPhaseCreatesExactlyItsOwnTables() {
+    void theMigrationsCreateExactlyTheTablesTheyShould() {
         List<String> tables = jdbc.queryForList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'", String.class);
 
-        // Both directions. Every identity table is present, and nothing else is:
+        // Both directions. Every expected table is present, and nothing else is:
         // a project or task table appearing here would mean a later phase had been
         // merged early, or that Hibernate had created something behind Flyway's back.
-        assertThat(tables).containsExactlyInAnyOrderElementsOf(
-                Stream.concat(Stream.of("flyway_schema_history"), IDENTITY_TABLES.stream())
-                        .toList());
+        assertThat(tables).containsExactlyInAnyOrderElementsOf(Stream.of(
+                        Stream.of("flyway_schema_history"), IDENTITY_TABLES.stream(), TEAM_TABLES.stream())
+                .flatMap(stream -> stream)
+                .toList());
     }
 
     @Test

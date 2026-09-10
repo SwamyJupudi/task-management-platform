@@ -19,12 +19,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.company.taskmanagementplatform.common.mail.MailMessage;
 import com.company.taskmanagementplatform.common.mail.MailSender;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
-
-import tools.jackson.databind.json.JsonMapper;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.support.RecordingMailSender;
 import com.company.taskmanagementplatform.users.UserAccount;
 import com.company.taskmanagementplatform.workspaces.dto.WorkspaceResponse;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Inviting somebody to a workspace, and the two ways an invitation is redeemed.

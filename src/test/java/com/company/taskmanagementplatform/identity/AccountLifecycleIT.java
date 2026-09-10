@@ -16,10 +16,10 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.company.taskmanagementplatform.common.error.ErrorCode;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
-
-import tools.jackson.databind.json.JsonMapper;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.users.UserAccount;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Activation and deactivation, and the thing that makes them mean anything: that they take effect at

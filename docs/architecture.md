@@ -111,6 +111,94 @@ Seeded roles: `SUPER_ADMIN` at platform scope, and `ADMIN`, `TEAM_LEAD`,
 `EMPLOYEE` per workspace. Custom workspace roles are a later capability; the
 schema supports them but none are created.
 
+Because those per-workspace rows are written in code rather than by a migration,
+adding a permission has a second obligation beside the `SUPER_ADMIN` mapping:
+**the migration must also backfill the workspace roles that already exist.**
+Otherwise a workspace created before the phase is permanently less capable than
+one created after it, and nothing fails to say so. `SystemRole` and the backfill
+are held together by a test.
+
+## Workspace and teams
+
+Reviewed and approved. Built in phase three.
+
+### Workspace settings and lifecycle
+
+Settings are columns on `workspaces`. There are four of them, they are read
+whenever a workspace is rendered, and a one-to-one settings table would buy a
+join and nothing else. If the set grows to where that stops being true, splitting
+it is a later migration rather than a decision to take in advance.
+
+The slug is fixed once the workspace exists. It appears in links people have
+already sent each other, and renaming it would break every one of them silently.
+The display name is what changes.
+
+**Archiving and deletion are different things and are kept apart.** Archiving is
+reversible and freezes the workspace: everything inside stays readable and
+nothing inside may be changed. Deletion is a soft delete, which hides the
+workspace and releases its slug. They also sit at different levels: archiving is
+`workspace:archive`, held by the workspace administrator, because it is a
+decision about work that has finished. Deleting is `workspace:delete`, granted to
+no workspace role at all, because removing a workspace is platform
+administration.
+
+The freeze is enforced in one place, `WorkspaceAccessGuard`, rather than in each
+service. A mutating endpoint asks for permission and activity together, so the
+rule applies to modules built later without their having to remember it. It is
+checked after the permission, never before, or a 409 would confirm to a stranger
+that the identifier names a real workspace.
+
+The default role is what an invitation uses when it names none. It is a setting
+rather than a constant so that an administrator who wants everybody to arrive as
+a team lead says so once instead of on every invitation.
+
+### Teams
+
+A team belongs to exactly one workspace and has at most one lead, since the
+requirements say assign a team lead in the singular. The lead is nullable,
+because a team between leads is an ordinary state and refusing to represent it
+would mean either inventing a placeholder or refusing to let a lead step down.
+
+Two invariants are enforced by the schema rather than by service checks, using
+the same composite-key technique as the role rules above: a team member must
+belong to the team's workspace, and so must its lead. See `database.md`.
+
+That has a consequence worth naming. Removing somebody from a workspace is
+refused by the database while they still lead or belong to one of its teams, so
+the `teams` module has to stand down first. It does that on a
+`WorkspaceMemberRemovedEvent` published *before* the membership row is deleted,
+listened for inside the publishing transaction. The module that owns the rows
+does the cleanup, and `workspaces` does not import `teams` to make it happen.
+
+Leadership is cleared rather than reassigned, because choosing somebody's
+replacement is not a decision that code is in a position to make. Assigning a
+lead adds them to the team if they are not in it, and removing a member refuses
+to strand the lead outside it; those two rules are the same rule seen from either
+end.
+
+**Team authorization is where the two-layer rule earns its keep.** A team lead
+holds `team:update` and `team:manage_members`, so the permission layer admits
+them for every team in the workspace. They do not hold `team:manage_any`, so the
+scope layer narrows them to the teams they actually lead. An administrator holds
+both and reaches all of them. Creating and deleting a team are the
+administrator's alone, so a lead cannot remove the team they lead.
+
+A team belonging to another workspace answers as missing rather than as
+forbidden, and the repository is written so that the narrower question is the
+only one it can answer: there is no lookup by team identifier alone.
+
+A guard authorizes and returns nothing. It runs in its own read-only transaction,
+so an entity handed back from it would reach the service already detached, and
+every change made to it would be discarded at the end of the request without an
+error. Each service loads the row it is about to change inside the transaction
+that changes it. This was a real defect during the build, caught by the tests
+rather than by review, and the rule is written down here so it is not rediscovered
+the same way.
+
+Team dashboards, workload and task statistics are named under team management in
+the requirements and are not built here. They need tasks to exist, so they belong
+with the other analytics in phase eight.
+
 ## Identity and authentication
 
 Reviewed and approved. Built in phase two. Where the requirements document is
@@ -340,7 +428,7 @@ Starts alongside the identity phase.
 | ----- | ---------------------------------------------------------------------- |
 | 1     | Foundation. Shared infrastructure above. No domain tables, no features. |
 | 2     | Identity. User, Role, Permission, authentication, authorization guards, workspace membership and invitations, and the minimal workspace row they require. |
-| 3     | Workspace lifecycle and settings, and teams.                            |
+| 3     | Workspace lifecycle and settings, and teams. **Done.**                  |
 | 4     | Projects and project membership.                                        |
 | 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries.   |
 | 6     | Comments and mentions, attachments, activity and audit logging.         |

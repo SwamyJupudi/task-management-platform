@@ -31,6 +31,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * <p>Every method starts by asking the guard, which answers 404 for a workspace the caller cannot
  * see and 403 for one they can see but may not act in. The workspace comes from the path and never
  * from a header, so it can never be inherited from ambient state.
+ *
+ * <p>Reads use {@code requirePermission} and writes use {@code requirePermissionToChange}, which
+ * adds the rule that an archived workspace is frozen.
  */
 @RestController
 @RequestMapping("${app.api.base-path}/workspaces/{workspaceId}")
@@ -61,14 +64,14 @@ class MemberController {
             @PathVariable UUID workspaceId,
             @PathVariable UUID userId,
             @Valid @RequestBody ChangeMemberRoleRequest request) {
-        guard.requirePermission(workspaceId, Permissions.MEMBER_ASSIGN_ROLE);
+        guard.requirePermissionToChange(workspaceId, Permissions.MEMBER_ASSIGN_ROLE);
         return memberships.changeRole(workspaceId, userId, request.roleSlug());
     }
 
     @DeleteMapping("/members/{userId}")
     @Operation(summary = "Remove a member from a workspace")
     ResponseEntity<Void> removeMember(@PathVariable UUID workspaceId, @PathVariable UUID userId) {
-        guard.requirePermission(workspaceId, Permissions.MEMBER_REMOVE);
+        guard.requirePermissionToChange(workspaceId, Permissions.MEMBER_REMOVE);
         memberships.removeMember(workspaceId, userId);
         return ResponseEntity.noContent().build();
     }

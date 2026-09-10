@@ -54,7 +54,7 @@ class InvitationController {
             summary = "Invite an address to a workspace",
             description = "Any outstanding invitation to the same address is superseded")
     InvitationResponse invite(@PathVariable UUID workspaceId, @Valid @RequestBody InviteMemberRequest request) {
-        guard.requirePermission(workspaceId, Permissions.MEMBER_INVITE);
+        guard.requirePermissionToChange(workspaceId, Permissions.MEMBER_INVITE);
         return invitations.invite(workspaceId, request.email(), request.roleSlug(), CurrentUser.requireId());
     }
 
@@ -69,7 +69,7 @@ class InvitationController {
     @DeleteMapping("${app.api.base-path}/workspaces/{workspaceId}/invitations/{invitationId}")
     @Operation(summary = "Withdraw an outstanding invitation")
     ResponseEntity<Void> revoke(@PathVariable UUID workspaceId, @PathVariable UUID invitationId) {
-        guard.requirePermission(workspaceId, Permissions.MEMBER_INVITE);
+        guard.requirePermissionToChange(workspaceId, Permissions.MEMBER_INVITE);
         invitations.revoke(workspaceId, invitationId);
         return ResponseEntity.noContent().build();
     }

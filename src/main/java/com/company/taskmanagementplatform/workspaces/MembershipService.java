@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class MembershipService {
     private final WorkspaceRepository workspaces;
     private final RoleRepository roles;
     private final UserAccountService users;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
     MembershipService(
@@ -34,11 +36,13 @@ public class MembershipService {
             WorkspaceRepository workspaces,
             RoleRepository roles,
             UserAccountService users,
+            ApplicationEventPublisher events,
             Clock clock) {
         this.members = members;
         this.workspaces = workspaces;
         this.roles = roles;
         this.users = users;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -87,9 +91,15 @@ public class MembershipService {
      * <p>The role is looked up by workspace as well as by identifier, so a role from elsewhere cannot
      * be named. Should that check ever be removed, the composite foreign key behind the table refuses
      * the write anyway; belt and braces, with the braces in the schema.
+     *
+     * <p>The archived check is here rather than only at the controller because this method is also
+     * how an invitation is redeemed, and that path is reached without the workspace guard: the person
+     * accepting may not be a member of anything yet. An archived workspace must not quietly gain
+     * people through a link issued before it was frozen.
      */
     @Transactional
     public void addMember(UUID workspaceId, UUID userId, UUID roleId, UUID invitedByUserId) {
+        requireActiveWorkspace(workspaceId);
         if (members.existsByWorkspaceIdAndUserId(workspaceId, userId)) {
             throw new ConflictException("That person is already a member of this workspace.");
         }
@@ -109,10 +119,25 @@ public class MembershipService {
         return toResponse(member, users.findById(userId).orElse(null), role);
     }
 
+    /**
+     * Takes somebody off a workspace roster.
+     *
+     * <p>The event goes out before the delete, and that order is load-bearing rather than incidental.
+     * A team lead and a team member are foreign keys into this table, so anything depending on the
+     * membership has to stand down first or PostgreSQL refuses the delete. Listeners run inside this
+     * transaction, so the whole thing succeeds or none of it does.
+     *
+     * <p>The flush is the other half of it. Hibernate is free to order the statements in a flush by
+     * entity type rather than by the order the calls were made, so without forcing the listeners'
+     * work out first, the delete below could still reach the database ahead of it.
+     */
     @Transactional
     public void removeMember(UUID workspaceId, UUID userId) {
         WorkspaceMember member = members.findByWorkspaceIdAndUserId(workspaceId, userId)
                 .orElseThrow(() -> ResourceNotFoundException.of("Workspace member", userId));
+
+        events.publishEvent(new WorkspaceMemberRemovedEvent(workspaceId, userId));
+        members.flush();
         members.delete(member);
     }
 
@@ -124,6 +149,14 @@ public class MembershipService {
     @Transactional(readOnly = true)
     public Optional<UUID> roleIdOf(UUID workspaceId, UUID userId) {
         return members.findByWorkspaceIdAndUserId(workspaceId, userId).map(WorkspaceMember::getRoleId);
+    }
+
+    private void requireActiveWorkspace(UUID workspaceId) {
+        Workspace workspace = workspaces.findByIdAndDeletedAtIsNull(workspaceId)
+                .orElseThrow(() -> ResourceNotFoundException.of("Workspace", workspaceId));
+        if (workspace.isArchived()) {
+            throw new ConflictException("This workspace is archived. Restore it before making changes.");
+        }
     }
 
     private void requireRoleInWorkspace(UUID workspaceId, UUID roleId) {

@@ -88,6 +88,29 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
         assertThat(mappedRoutes()).hasSizeGreaterThan(15);
     }
 
+    @Test
+    void theWorkspaceAndTeamRoutesAreAmongTheOnesScanned() {
+        // The matrix protects a route by walking over it, so a route it never sees
+        // is a route it never protected. Naming a few of the newest ones keeps the
+        // sweep from passing vacuously for a whole module.
+        List<String> mapped = mappedRoutes().stream().map(Route::describe).toList();
+
+        assertThat(mapped)
+                .contains(
+                        "PATCH /api/v1/workspaces/{workspaceId}",
+                        "DELETE /api/v1/workspaces/{workspaceId}",
+                        "POST /api/v1/workspaces/{workspaceId}/archive",
+                        "POST /api/v1/workspaces/{workspaceId}/unarchive",
+                        "POST /api/v1/workspaces/{workspaceId}/teams",
+                        "GET /api/v1/workspaces/{workspaceId}/teams",
+                        "PATCH /api/v1/workspaces/{workspaceId}/teams/{teamId}",
+                        "DELETE /api/v1/workspaces/{workspaceId}/teams/{teamId}",
+                        "POST /api/v1/workspaces/{workspaceId}/teams/{teamId}/members",
+                        "DELETE /api/v1/workspaces/{workspaceId}/teams/{teamId}/members/{userId}",
+                        "PUT /api/v1/workspaces/{workspaceId}/teams/{teamId}/lead",
+                        "DELETE /api/v1/workspaces/{workspaceId}/teams/{teamId}/lead");
+    }
+
     private boolean respondsToAnonymous(Route route) {
         try {
             int status = mockMvc.perform(MockMvcRequestBuilders.request(route.method(), route.probeUri()))

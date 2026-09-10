@@ -7,6 +7,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.company.taskmanagementplatform.common.error.ConflictException;
 import com.company.taskmanagementplatform.common.error.ResourceNotFoundException;
 import com.company.taskmanagementplatform.common.security.CurrentUser;
 import com.company.taskmanagementplatform.common.security.PermissionResolver;
@@ -32,6 +33,10 @@ import com.company.taskmanagementplatform.common.security.PermissionResolver;
  * <p>Membership is inferred from the resolved permission set rather than queried again. Every seeded
  * role grants at least {@code workspace:read}, so an empty set means no membership and no platform
  * role, which is precisely the case that must look like nothing at all.
+ *
+ * <p>A third question arrived with the workspace lifecycle: is this workspace still open for
+ * changes? It is asked by {@link #requireActiveWorkspace}, always after the first two, so an
+ * archived workspace never announces its existence to somebody who could not otherwise see it.
  */
 @Component
 public class WorkspaceAccessGuard {
@@ -53,6 +58,39 @@ public class WorkspaceAccessGuard {
         Set<String> granted = visiblePermissions(workspaceId);
         if (!granted.contains(permissionCode)) {
             throw new AccessDeniedException("Missing permission " + permissionCode);
+        }
+    }
+
+    /**
+     * The permission check, plus the rule that an archived workspace is frozen.
+     *
+     * <p>Every mutating endpoint inside a workspace calls this rather than {@link
+     * #requirePermission}. Keeping the pair together here is what makes the freeze apply to modules
+     * built later without their having to remember it.
+     *
+     * @throws ConflictException if the workspace is archived
+     */
+    @Transactional(readOnly = true)
+    public void requirePermissionToChange(UUID workspaceId, String permissionCode) {
+        requirePermission(workspaceId, permissionCode);
+        requireActiveWorkspace(workspaceId);
+    }
+
+    /**
+     * Refuses a change to an archived workspace.
+     *
+     * <p>Called on its own only where the permission was already established. Order matters: the
+     * caller must have passed {@link #requirePermission} first, or a 409 would tell a stranger that
+     * the identifier names a real workspace.
+     */
+    @Transactional(readOnly = true)
+    public void requireActiveWorkspace(UUID workspaceId) {
+        Workspace workspace = workspaces
+                .findByIdAndDeletedAtIsNull(workspaceId)
+                .orElseThrow(() -> ResourceNotFoundException.of("Workspace", workspaceId));
+
+        if (workspace.isArchived()) {
+            throw new ConflictException("This workspace is archived. Restore it before making changes.");
         }
     }
 

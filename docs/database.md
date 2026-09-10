@@ -16,13 +16,19 @@ Applied so far:
 | Version | What                                                     |
 | ------- | -------------------------------------------------------- |
 | `V1`    | Extensions only: `pgcrypto` for UUID generation, `citext` for the case-insensitive unique email column. No tables. |
-
-Approved and not yet written:
-
-| Version | What                                                     |
-| ------- | -------------------------------------------------------- |
 | `V2`    | Identity tables: `users`, `permissions`, `roles`, `role_permissions`, `workspaces`, `workspace_members`, `workspace_invitations`, `user_tokens`, `refresh_tokens` |
 | `V3`    | Seed data: the global permission catalog, the single `SUPER_ADMIN` platform role, and an explicit `role_permissions` row joining that role to every permission in the catalog. Workspace roles are seeded in code when a workspace is created, so they are not migration data |
+| `V4`    | Workspace settings and lifecycle columns, the `teams` and `team_members` tables, seven new permissions mapped to `SUPER_ADMIN`, and a backfill giving the new grants to workspace roles that already existed |
+
+A migration that adds a permission carries a second obligation beside the
+`SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
+grants too.** Those rows were written in code when each workspace was created, so
+nothing updates them on its own, and a workspace created before the migration
+would otherwise be permanently less capable than one created after it. `V4`
+backfills by role slug, and `WorkspaceRoleGrantsIT` holds the backfill and
+`SystemRole` together. The backfill is a no-op on a database with no workspaces
+yet, which is every test run, so the test asserts the agreement rather than the
+statement.
 
 `SUPER_ADMIN` is mapped explicitly rather than short-circuited in code, so that
 authorization has one implementation and not two. Every later migration that adds
@@ -96,6 +102,30 @@ rule a service is trusted to remember. The application reinforces it from the
 other side: `PlatformRoleService.assignSuperAdmin` takes no role identifier, so
 naming the wrong role is not expressible in ordinary code.
 
+**A team's people are pinned to its workspace by the database.** Both `teams` and
+`team_members` carry `workspace_id` beside the user, and the pair is a foreign key
+into `workspace_members (workspace_id, user_id)`. So a lead who does not belong to
+the workspace, and a team member who does not, are writes PostgreSQL refuses.
+`team_members` keys its team the same way, into `teams (id, workspace_id)`, which
+is why `teams` carries the redundant `UNIQUE (id, workspace_id)` that `roles`
+carries for the same reason.
+
+This has a consequence worth stating, because it is the opposite of the usual
+one: **removing somebody from a workspace is refused while they lead or belong to
+one of its teams.** The `teams` module clears that state first, on an event
+published before the membership row is deleted. The dependency is enforced rather
+than remembered, so a future module that hangs rows off a membership will be told
+at once rather than silently leaving orphans.
+
+**The workspace default role is keyed the same way.** `default_role_id` references
+`roles (id, workspace_id)`, so one workspace cannot be pointed at another's role,
+and a platform role has a null workspace and cannot be named at all.
+
+**Archived means frozen, deleted means gone.** `workspaces.status` and
+`archived_at` are held consistent by a check constraint, so the flag and the
+timestamp cannot disagree. Archiving is reversible and blocks every write inside
+the workspace; soft deletion hides it and releases its slug.
+
 **Membership rows do not outlive the person.** Removing an account deletes its
 `workspace_members` rows rather than flagging them, which follows the rule above
 that soft deletion never applies to a join table. The alternative, keeping them
@@ -117,11 +147,11 @@ The scheduled purge is hardening-phase work.
 
 | Table                   | Notes                                                            |
 | ----------------------- | ---------------------------------------------------------------- |
-| `workspaces`            | Root scope for everything below. Created in phase two with identity columns only, because roles and memberships cannot reference a table that does not exist. Settings and lifecycle arrive in phase three |
+| `workspaces`            | Root scope for everything below. Created in phase two with identity columns only; phase three added `description`, `timezone`, `default_role_id`, and the archive pair. Settings are columns rather than a one-to-one settings table: there are four, they are read whenever a workspace is rendered, and a second table would buy a join and nothing else |
 | `workspace_members`     | One role per user per workspace. Unique on `(workspace_id, user_id)`. The role must belong to the same workspace, enforced by the composite foreign key described above |
 | `workspace_invitations` | Hashed token, expiry, status. One pending invitation per address per workspace, enforced by a partial unique index |
-| `teams`                 | `lead_user_id` is a single column, since the requirements say assign a team lead in the singular. The lead must be a member |
-| `team_members`          | Join. Unique on `(team_id, user_id)`                              |
+| `teams`                 | `lead_user_id` is a single column, since the requirements say assign a team lead in the singular, and nullable, because a team between leads is an ordinary state. Status `ACTIVE/ARCHIVED`, soft deleted. Name unique per workspace, folded and partial |
+| `team_members`          | Join. Unique on `(team_id, user_id)`. Carries `workspace_id` so both of its rules are foreign keys |
 
 ### Projects and tasks
 
@@ -159,6 +189,9 @@ Created with the tables that need them, not retrofitted.
 | `notifications (recipient_user_id, read_at)` | Unread badge and history    |
 | `activity_logs (workspace_id, created_at desc)` | Audit browsing           |
 | `activity_logs (entity_type, entity_id)` | History for one record          |
+| `teams (workspace_id)`                   | The team list of a workspace    |
+| `team_members (team_id)`                 | One team's roster               |
+| `team_members (user_id)`                 | Cleanup when somebody leaves    |
 
 All partial on non-deleted rows where the table is soft-deletable.
 

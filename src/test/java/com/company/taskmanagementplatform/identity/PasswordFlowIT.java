@@ -21,11 +21,11 @@ import com.company.taskmanagementplatform.common.error.ErrorCode;
 import com.company.taskmanagementplatform.common.mail.MailMessage;
 import com.company.taskmanagementplatform.common.mail.MailSender;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
-
-import tools.jackson.databind.json.JsonMapper;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.support.RecordingMailSender;
 import com.company.taskmanagementplatform.users.UserAccount;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /** Recovering a forgotten password, and changing a known one. */
 class PasswordFlowIT extends AbstractIntegrationTest {

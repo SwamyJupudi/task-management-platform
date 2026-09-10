@@ -42,6 +42,54 @@ class SystemRoleTest {
     }
 
     @Test
+    void aTeamLeadManagesTeamsWithoutTheWorkspaceWideGrant() {
+        // The scope half of the two-layer rule. Holding team:update says what they
+        // may do; withholding team:manage_any is what narrows it to the teams they
+        // actually lead. Granting both here would silently widen every lead in
+        // every workspace to every team, and no other test would notice.
+        assertThat(SystemRole.TEAM_LEAD.permissionCodes())
+                .contains(Permissions.TEAM_READ, Permissions.TEAM_UPDATE, Permissions.TEAM_MANAGE_MEMBERS);
+
+        assertThat(SystemRole.TEAM_LEAD.permissionCodes())
+                .doesNotContain(Permissions.TEAM_MANAGE_ANY, Permissions.TEAM_CREATE, Permissions.TEAM_DELETE);
+    }
+
+    @Test
+    void anAdministratorRunsEveryTeamInTheirWorkspace() {
+        assertThat(SystemRole.ADMIN.permissionCodes())
+                .contains(
+                        Permissions.TEAM_CREATE,
+                        Permissions.TEAM_UPDATE,
+                        Permissions.TEAM_DELETE,
+                        Permissions.TEAM_MANAGE_MEMBERS,
+                        Permissions.TEAM_MANAGE_ANY,
+                        Permissions.WORKSPACE_ARCHIVE);
+    }
+
+    @Test
+    void anEmployeeMaySeeTeamsAndChangeNone() {
+        assertThat(SystemRole.EMPLOYEE.permissionCodes()).contains(Permissions.TEAM_READ);
+        assertThat(SystemRole.EMPLOYEE.permissionCodes())
+                .doesNotContain(
+                        Permissions.TEAM_CREATE,
+                        Permissions.TEAM_UPDATE,
+                        Permissions.TEAM_DELETE,
+                        Permissions.TEAM_MANAGE_MEMBERS,
+                        Permissions.TEAM_MANAGE_ANY);
+    }
+
+    @Test
+    void everyRoleCanSeeTheTeamsOfItsWorkspace() {
+        // Teams are the shape of the workspace. A role that could not see them
+        // would be looking at an installation with a hole in the middle of it.
+        for (SystemRole role : SystemRole.values()) {
+            assertThat(role.permissionCodes())
+                    .as("permissions granted by %s", role)
+                    .contains(Permissions.TEAM_READ);
+        }
+    }
+
+    @Test
     void anEmployeeHoldsNothingAdministrative() {
         assertThat(SystemRole.EMPLOYEE.permissionCodes())
                 .doesNotContain(
@@ -73,6 +121,8 @@ class SystemRoleTest {
         assertThat(everythingWorkspaceRolesGrant)
                 .doesNotContain(
                         Permissions.WORKSPACE_CREATE,
+                        // Removing a workspace stays platform administration even
+                        // though archiving one does not.
                         Permissions.WORKSPACE_DELETE,
                         Permissions.USER_DELETE,
                         Permissions.USER_DEACTIVATE,

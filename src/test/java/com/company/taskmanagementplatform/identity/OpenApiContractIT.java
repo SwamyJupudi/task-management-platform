@@ -58,6 +58,41 @@ class OpenApiContractIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void documentsTheWorkspaceLifecycleEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}'].patch").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}'].delete").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/archive'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/unarchive'].post").exists());
+    }
+
+    @Test
+    void documentsTheTeamEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}'].patch").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}'].delete").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/archive'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/unarchive'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/members'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/members'].post")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/members/{userId}'].delete")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/lead'].put").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/lead'].delete")
+                        .exists());
+    }
+
+    @Test
     void keepsTheSharedErrorShapeInTheDocument() throws Exception {
         // The foundation's promise: one error body across every endpoint.
         mockMvc.perform(get("/v3/api-docs"))

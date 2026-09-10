@@ -3,6 +3,8 @@ package com.company.taskmanagementplatform.workspaces;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,8 +25,14 @@ import com.company.taskmanagementplatform.users.UserDeletedEvent;
  *
  * <p>Runs inside the publishing transaction, so the removal and the cleanup succeed or fail
  * together.
+ *
+ * <p>Ordered last, explicitly. Team membership and team leadership are foreign keys into {@code
+ * workspace_members}, so the modules holding those rows have to stand down before this one deletes
+ * the row they point at. That ordering is the difference between a clean removal and a constraint
+ * violation, so it is stated rather than left to the default.
  */
 @Component
+@Order(Ordered.LOWEST_PRECEDENCE)
 class MembershipCleanupListener {
 
     private static final Logger log = LoggerFactory.getLogger(MembershipCleanupListener.class);
