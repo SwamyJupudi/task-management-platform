@@ -52,6 +52,11 @@ Shared database, with a workspace column on every scoped table. The workspace is
 resolved once per request and enforced centrally, not remembered query by query.
 Cross-workspace reads are prevented by construction.
 
+The workspace comes from the request path and never from a header, so it can
+never be inherited from ambient state. A record belonging to a workspace the
+caller is not a member of is reported as missing rather than as forbidden,
+because a forbidden response confirms that the identifier exists.
+
 ## Authorization
 
 Roles are scoped to the workspace. Each workspace owns its own role rows, seeded
@@ -65,6 +70,28 @@ check constraint on the role table enforces the split: platform scope requires n
 workspace, workspace scope requires one. A workspace role therefore cannot leak
 across workspaces.
 
+Granting the platform role is deliberately hard to get wrong.
+`PlatformRoleService.assignSuperAdmin` takes a user and nothing else, so no
+caller can name a role at all, and the database independently refuses any role
+that is not platform-scoped through a key on `(platform_role_id,
+platform_role_scope)`. See `database.md`.
+
+`SUPER_ADMIN` holds no membership row in any workspace and does not need one, so
+platform administration does not require joining every workspace it has to
+repair. Its reach is nonetheless granted the ordinary way: the seed migration
+writes an explicit `role_permissions` row for every permission in the catalog,
+and resolution runs the same role-to-permission query it runs for everyone else.
+
+There is deliberately no bypass branch for `SUPER_ADMIN` anywhere in the
+authorization path. A privileged shortcut is a second implementation of
+authorization that no test of the first one covers, and it is exactly the branch
+an attacker wants to reach. The cost of avoiding it is a standing obligation:
+**every future migration that adds a permission must map it to `SUPER_ADMIN` in
+the same migration.** A permission that is added without that mapping is one the
+platform administrator silently does not hold.
+
+Every action it takes is audited from the phase that adds auditing.
+
 Authorization has **two layers**, and both must pass.
 
 1. **Permission** answers what the caller may do. Checked at the method boundary.
@@ -72,13 +99,210 @@ Authorization has **two layers**, and both must pass.
 
 An employee holding the status-update permission may still only touch tasks in
 projects they belong to. An admin holding the same permission plus the
-workspace-wide grant may touch any task in the workspace. The resolved permission
-set is cacheable per user and workspace, invalidated when membership or the role
-mapping changes.
+workspace-wide grant may touch any task in the workspace.
+
+The resolved permission set is read from the database on the requests that need
+it. Caching it is deliberately deferred. A membership change, a role change and a
+deactivation must take effect at once, and a cache held inside one process is
+already wrong the moment a second instance starts. When the read cost justifies
+it, the answer is a shared cache in the hardening phase, not a local one now.
 
 Seeded roles: `SUPER_ADMIN` at platform scope, and `ADMIN`, `TEAM_LEAD`,
 `EMPLOYEE` per workspace. Custom workspace roles are a later capability; the
 schema supports them but none are created.
+
+## Identity and authentication
+
+Reviewed and approved. Built in phase two. Where the requirements document is
+silent and the choice is ours, that is stated.
+
+### Account lifecycle
+
+Registration creates a person, not a workspace. A new account is
+`PENDING_VERIFICATION` until the emailed token is redeemed, then `ACTIVE`. An
+administrator may move it to `DEACTIVATED` and back. Soft deletion is a third
+thing again, and means removal rather than suspension.
+
+Workspace access is never implied by registering. It comes from an invitation, or
+from a membership row an administrator creates. Only `SUPER_ADMIN` creates
+workspaces.
+
+The automatic lockout that follows repeated failed logins lives in two columns on
+the user, not in the status column. A lock is a temporary decision made by the
+machine and a deactivation is a durable one made by a person; merging them would
+make both harder to read and would let a lock look like a punishment.
+
+### Tokens
+
+| Token              | Form                          | Lifetime   |
+| ------------------ | ----------------------------- | ---------- |
+| Access             | Signed JWT, identity only     | 15 minutes |
+| Refresh            | Opaque random, hashed at rest | 14 days    |
+| Email verification | Opaque random, hashed at rest | 24 hours   |
+| Password reset     | Opaque random, hashed at rest | 1 hour     |
+| Invitation         | Opaque random, hashed at rest | 7 days     |
+
+The access token carries issuer, audience, subject, issue time, expiry and a
+token id. It carries no address, no role and no permission. Permissions differ
+per workspace and have to revoke at once, so a fifteen-minute copy of them inside
+the token would be both large and wrong for up to fifteen minutes.
+
+Rotation is a conditional update rather than a read followed by a write. Two
+requests holding the same live token would otherwise both find it usable and both
+mint a successor, quietly turning one session into two; the predicate is instead
+evaluated under the row lock, so exactly one caller is told it claimed the token.
+The loser is treated as reuse, because from inside a request a double submit and a
+replayed stolen token are indistinguishable, and only one of those two readings is
+safe.
+
+The refresh token is 256 bits of secure random, stored as a SHA-256 hash. A fast
+hash is the right choice here, and a password hash would be the wrong one: the
+value is already full entropy, so there is no dictionary to slow down, and a work
+factor would be paid on every refresh to buy nothing. Each use rotates the token
+and links the replacement to its predecessor. Presenting a token that has already
+been consumed revokes the entire family, on the assumption that two parties hold
+it and one of them is an attacker.
+
+The single-use tokens for verification, reset and invitation are hashed the same
+way, expire, and are consumed on first redemption.
+
+Verification and reset tokens are posted in a request body rather than read from
+the URL, because a token in a URL ends up in browser history, in the referrer
+header of the next navigation, and in the access log of everything in between.
+The invitation preview is the one bounded exception: it takes its token as a
+query parameter, because the page has to be reachable directly from a link in a
+message by somebody who has no account and so cannot be asked to post anything
+first. The exception is narrowed rather than waved through. The endpoint is a
+read, it returns only the workspace name, the invited address and whether that
+address already has an account, and redeeming the invitation is a separate POST.
+The token is never written to a log on that path.
+
+Expired and consumed rows in `user_tokens` and `refresh_tokens` are not removed.
+Nothing reads them, and an expiry check is applied on every use, so they are
+inert rather than dangerous. The scheduled purge that reclaims the space belongs
+to the hardening phase, along with the scheduling support it needs.
+
+### Transport
+
+The refresh token travels in a cookie that is `HttpOnly`, `Secure`,
+`SameSite=Strict`, and scoped to the authentication path. The access token is
+never written anywhere the browser keeps; the frontend holds it in memory. This
+survives cross-site scripting, which local storage does not.
+
+Transport is isolated behind one component so it can be replaced. If the frontend
+is ever served from a different site, `SameSite=Strict` stops working and the
+token has to move into the response body. That has to remain a single
+substitution rather than a redesign.
+
+Cross-site request forgery protection stays off for the bearer-token API. The
+refresh cookie reintroduces the risk on two endpoints only, and `SameSite=Strict`
+together with a JSON content type that forces a preflight covers them. If the
+transport ever moves to the response body, this reasoning has to be revisited.
+
+### Revocation
+
+There is no cache anywhere in this phase. Account status is read from the
+database on the requests that require it, and the permission set is read the same
+way. Deactivation, a password change and a role change therefore take effect on
+the next request, on every instance, with no invalidation to get wrong.
+
+This trades throughput for correctness knowingly, and it is the decision most
+likely to be revisited. When it is, the answer is a shared cache in the hardening
+phase.
+
+Logout revokes the refresh token it is given and clears the cookie. The access
+token stays valid until it expires, so for at most fifteen minutes. A denylist
+would close that window; it is not proposed, because the window is short and the
+cost would be a lookup on every request forever.
+
+A password change revokes every other session and issues a fresh pair to the
+session that made the change. A password reset revokes every session without
+exception, because the person resetting may be recovering from a compromise.
+
+### Password handling
+
+BCrypt at strength 12, behind a delegating encoder, so every stored hash names
+its own algorithm and a later move to Argon2id is a rehash on next login rather
+than a forced reset for everybody.
+
+The policy is a minimum of eight characters and a maximum of 72 bytes, with no
+composition rules. The upper bound is not arbitrary: BCrypt silently ignores
+input past 72 bytes, so without it two different passwords could open the same
+account. The absence of composition rules is deliberate, since the requirements
+document asks for none.
+
+### Failure handling
+
+Wrong credentials return one generic response and always cost one hash
+comparison, including for an address that was never registered, so neither the
+message nor the timing reveals who holds an account. Account status is disclosed
+only once the password is correct. At that point the caller already holds the
+credential, so a precise message helps them and tells an attacker nothing new.
+
+Forgotten-password and resend-verification requests are accepted without saying
+whether the address exists.
+
+Repeated failures lock the account, counted on the user row. The lock is bounded
+and is never extended by further attempts, which matters more than it sounds: an
+implementation that re-arms the lock on every failure lets anybody who knows an
+address keep its owner locked out indefinitely, turning a defence against
+guessing into a way of denying somebody their own account. One run of failures
+buys one lock period; causing another means waiting the first one out. Once a
+lock expires the count starts from zero, so unrelated failures weeks apart never
+accumulate into one.
+
+Escalating lock periods were considered and left out. The requirements ask for no
+such policy, and it would need a counter that survives the reset, which is state
+earning its keep only once there is evidence that fixed periods are insufficient.
+
+Address-level and gateway-level rate limiting stay in the hardening phase, where
+the build order already places them. No rate-limiting library is introduced for
+either.
+
+**Registering with an address that already has an account answers 409, and that
+is an accepted risk rather than an oversight.** Sign-in, forgotten password and
+resend all refuse to confirm whether an address is registered; registration
+confirms it. The asymmetry is deliberate, because the two disclosures are not
+worth the same. Enumeration at sign-in pairs with password guessing to reach an
+account. Enumeration at registration reveals only that a corporate address is
+registered, on a platform where, by the decision above, registering grants access
+to nothing at all. The cost of closing it would be a signup that cannot tell
+somebody their address is already in use.
+
+The condition attached to accepting it: **the hardening phase must rate-limit
+registration by address as well as by caller**, since bulk enumeration is the
+only form of this that matters.
+
+### Module boundaries
+
+`users` owns the user table and the entity. `auth` owns the tokens and the
+authentication flows and never sees a password hash: it asks `users` to verify a
+credential and is told only the outcome. `workspaces` owns membership,
+invitations and the role mapping. A cross-cutting `common.security` package holds
+the authentication filter, the principal, the permission expression and the
+permission code constants, and is used by every module built after this one.
+
+Authentication failures raised inside a servlet filter never reach the
+`@RestControllerAdvice`, so the entry point and the denied handler produce the
+same error body themselves. One shape, two producers, and a test that holds them
+together.
+
+Mail is a port. Phase two ships the interface and an implementation that logs the
+link, which is enough to exercise verification and reset from end to end. A real
+transport arrives when the delivery provider is chosen.
+
+### Bootstrapping the first administrator
+
+Nothing can be administered until one `SUPER_ADMIN` exists, and a seeded password
+in a migration would be a committed secret. A startup runner reads an address and
+a password from the environment and creates the account, hashing the password
+with the same encoder the application uses everywhere else.
+
+It does nothing at all when a platform administrator already exists, so a restart
+never resurrects or overwrites one. If the configuration is half present, with an
+address but no password or the reverse, startup fails and says which value is
+missing. Silently continuing would leave an operator believing they had an
+administrator when they did not.
 
 ## Cross-cutting infrastructure
 
@@ -115,15 +339,15 @@ Starts alongside the identity phase.
 | Phase | Scope                                                                  |
 | ----- | ---------------------------------------------------------------------- |
 | 1     | Foundation. Shared infrastructure above. No domain tables, no features. |
-| 2     | Identity. User, Role, Permission, authentication, authorization guards. |
-| 3     | Workspaces and teams, including invitations and the tenancy rule.       |
+| 2     | Identity. User, Role, Permission, authentication, authorization guards, workspace membership and invitations, and the minimal workspace row they require. |
+| 3     | Workspace lifecycle and settings, and teams.                            |
 | 4     | Projects and project membership.                                        |
 | 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries.   |
 | 6     | Comments and mentions, attachments, activity and audit logging.         |
 | 7     | Notifications with read state, history, and the deadline scheduler.     |
 | 8     | Dashboards, reports, analytics, and the indexes they need.              |
 | 9     | Admin panel.                                                            |
-| 10    | Hardening: rate limits, headers, upload security, caching, query tuning.|
+| 10    | Hardening: rate limits, headers, upload security, caching, query tuning, expired token purge. |
 | 11    | Delivery: environments, deployment, backups, end-to-end suite, docs.    |
 
 Each phase ends with its own tests and documentation, so the production
@@ -131,9 +355,11 @@ readiness checklist fills in continuously rather than at the end.
 
 ## Still open
 
+Token design was here and is now settled. See *Identity and authentication*
+above.
+
 | Item                       | State                                                              |
 | -------------------------- | ------------------------------------------------------------------ |
-| Token design               | **Proposed.** Short-lived access token plus rotating refresh token, stored hashed so logout and deactivation can revoke. To be reviewed before phase two. |
 | Storage provider           | **Unspecified** by the requirements. Kept provider-agnostic behind a port. Chosen before attachments. |
 | Task dependency semantics  | **Unspecified.** Modeled as a single blocking relationship.        |
 | Notification delivery      | **Unspecified.** Polling first, server-sent events as a later swap. |

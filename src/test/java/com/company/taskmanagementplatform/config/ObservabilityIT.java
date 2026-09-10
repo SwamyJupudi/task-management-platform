@@ -63,4 +63,24 @@ class ObservabilityIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.requestId").isNotEmpty())
                 .andExpect(jsonPath("$.path").value("/api/v1/does-not-exist"));
     }
+
+    @Test
+    void aProtectedEndpointThatExistsStillRefusesAnAnonymousCaller() throws Exception {
+        // The other half of the rule that lets an unmapped address answer 404. A real
+        // endpoint must not start answering 404 as well, because that would turn the
+        // authentication boundary into a way of asking which addresses are real.
+        mockMvc.perform(get("/api/v1/auth/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
+                .andExpect(jsonPath("$.path").value("/api/v1/auth/me"));
+    }
+
+    @Test
+    void anUnknownPathUnderAProtectedPrefixIsStillAFourOhFour() throws Exception {
+        // Guards the matcher itself. A path that merely starts like a real one has no
+        // handler either, so it is not protected and must not claim to be.
+        mockMvc.perform(get("/api/v1/workspaces/not-a-real-subresource/either"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
 }

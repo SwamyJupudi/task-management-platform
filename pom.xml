@@ -42,6 +42,16 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!--
+          Supplies JwtEncoder and JwtDecoder (spring-security-oauth2-jose) so the
+          access token is signed and verified by the security framework itself
+          rather than by a third-party JWT library. Version is managed by the
+          Spring Boot bill of materials.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
 
         <!-- schema migration: Flyway is the only source of schema truth -->
         <dependency>

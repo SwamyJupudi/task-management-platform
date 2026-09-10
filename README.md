@@ -5,9 +5,10 @@ workflows, and reporting. Requirements live in
 [`docs/project-requirements.pdf`](docs/project-requirements.pdf), which is the
 source of truth for scope.
 
-**Current state: foundation phase.** The shared infrastructure every feature
-will sit on is in place. No feature modules exist yet. There is no
-authentication, and no domain tables. See [Project status](#project-status).
+**Current state: identity phase.** The shared infrastructure is in place, and so
+are accounts, authentication, and role-based authorization scoped to a
+workspace. Teams, projects and tasks do not exist yet. See
+[Project status](#project-status).
 
 ---
 
@@ -43,6 +44,12 @@ docker compose up -d          # starts PostgreSQL on port 5432
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
+The example file creates a platform administrator on first start, from
+`SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD`. Change the password before using
+this anywhere but your own machine. Set both variables or neither: half of the
+pair fails startup rather than leaving the platform with nobody able to
+administer it.
+
 On Windows use `mvnw.cmd` in place of `./mvnw`.
 
 The application starts on port 8080 and applies its migrations on the way up.
@@ -53,6 +60,11 @@ curl http://localhost:8080/actuator/health
 ```
 
 Then open the API console at <http://localhost:8080/swagger-ui.html>.
+
+There is no mail transport yet. In the `dev` profile the verification and reset
+links are written to the application log instead, so you can complete either flow
+locally by copying the link out of the console. That logging is off everywhere
+else, because tokens do not belong in logs.
 
 To stop the database and keep its data, run `docker compose stop`. To remove the
 data as well, run `docker compose down -v`.
@@ -73,6 +85,10 @@ fails at startup instead of quietly running with development settings.
 | `dev`   | Local machine   | Defaults match `docker-compose.yml`, verbose logging, API console on |
 | `test`  | Automated tests | Datasource supplied by the test container                           |
 | `prod`  | Deployed        | Every value required from the environment, JSON logs, console off   |
+
+`JWT_SECRET` is required outside `dev` and has no fallback. It must be at least
+32 bytes; a shorter one fails at startup rather than signing tokens with a key
+that is too weak for the algorithm.
 
 Set the profile with `SPRING_PROFILES_ACTIVE`, or with
 `-Dspring-boot.run.profiles` when using the Maven plugin.
@@ -126,7 +142,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | Phase | Scope                                     | State       |
 | ----- | ----------------------------------------- | ----------- |
 | 1     | Foundation: shared infrastructure         | Done        |
-| 2     | Identity: users, roles, authentication    | Not started |
+| 2     | Identity: users, roles, authentication    | Done        |
 | 3     | Workspaces and teams                      | Not started |
 | 4     | Projects                                  | Not started |
 | 5     | Tasks, subtasks, dependencies, views      | Not started |
@@ -152,12 +168,25 @@ The React frontend starts alongside phase two.
 - An integration test harness running against real PostgreSQL.
 - A CI pipeline covering lint, test, and build.
 
+### What the identity phase delivers
+
+- Registration, email verification, sign-in and sign-out.
+- Forgotten-password recovery, and changing a password from inside a session.
+- Short-lived access tokens, with rotating refresh tokens that detect reuse.
+- Account activation and deactivation, taking effect on the next request.
+- Roles and permissions scoped to a workspace, with a global permission catalog.
+- Workspace membership and invitations, including for people with no account yet.
+- A session list, so a person can see and end their own sessions.
+
+The filter chain now refuses anything that is not on an explicit public list, and
+a test walks every mapped endpoint to prove it.
+
 ### What it deliberately does not deliver
 
-Authentication, authorization, and every feature module. The security filter
-chain currently **permits every request**, because there is no identity model to
-check against yet. It is a placeholder and must not be exposed on any reachable
-network. Phase two replaces it.
+Teams, projects, tasks, comments, attachments, notifications and reporting. The
+`workspaces` table exists with only the columns roles and memberships need to
+reference; its settings and lifecycle belong to phase three.
 
-Domain tables are not created either. Each module brings its own migration when
-it is built, so the schema grows with the code rather than ahead of it.
+There is no mail transport, no rate limiting beyond per-account lockout, and no
+cleanup of expired token rows. Each is scheduled work rather than an oversight:
+see the identity section of [`docs/architecture.md`](docs/architecture.md).

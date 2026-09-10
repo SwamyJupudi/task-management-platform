@@ -42,6 +42,41 @@ their infrastructure form. The rest arrive with the code they describe.
 
 No coverage percentage is specified in the requirements document.
 
+## The identity phase
+
+Unit tests cover the pieces that can be reasoned about alone: the password
+policy, token generation and hashing, access token issue and validation, refresh
+rotation and reuse detection, the credential-check outcomes and their ordering,
+lockout, the cookie codec, and permission resolution.
+
+Integration tests cover the rest against real PostgreSQL. `IdentitySchemaIT` is
+worth singling out: it writes SQL directly, because the constraints it exercises
+exist so that a mistake in the service layer cannot corrupt the data, and testing
+them through the service layer would prove the wrong thing.
+
+Two tests guard against the mistakes nobody makes deliberately.
+
+**`ProtectedRouteMatrixIT`** enumerates every endpoint the application maps and
+asserts that anything outside an explicit public list refuses an anonymous
+caller. Individual tests check the endpoints somebody remembered to write a test
+for; this one checks the ones they did not. A controller added in a later phase
+joins it automatically, and the only way to leave a route open is to add it to
+that list in a review.
+
+**`PermissionCatalogIT`** holds the permission codes in the source together with
+the rows a migration seeded. A constant with no row is a permission nobody can
+hold; a row with no constant is a grant nothing checks. Both fail silently
+otherwise. It also asserts the platform administrator is mapped to every
+permission, which is the standing obligation that comes with having no bypass in
+the authorization path.
+
+## Mail in tests
+
+There is no mail transport. `RecordingMailSender` captures messages so a test can
+read the token out of one, which is how verification, reset and invitation are
+driven from end to end with no mail server present. It is registered as the
+primary `MailSender` for the whole suite.
+
 ## Writing a new integration test
 
 ```java

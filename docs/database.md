@@ -17,6 +17,19 @@ Applied so far:
 | ------- | -------------------------------------------------------- |
 | `V1`    | Extensions only: `pgcrypto` for UUID generation, `citext` for the case-insensitive unique email column. No tables. |
 
+Approved and not yet written:
+
+| Version | What                                                     |
+| ------- | -------------------------------------------------------- |
+| `V2`    | Identity tables: `users`, `permissions`, `roles`, `role_permissions`, `workspaces`, `workspace_members`, `workspace_invitations`, `user_tokens`, `refresh_tokens` |
+| `V3`    | Seed data: the global permission catalog, the single `SUPER_ADMIN` platform role, and an explicit `role_permissions` row joining that role to every permission in the catalog. Workspace roles are seeded in code when a workspace is created, so they are not migration data |
+
+`SUPER_ADMIN` is mapped explicitly rather than short-circuited in code, so that
+authorization has one implementation and not two. Every later migration that adds
+a permission carries the obligation to map it to `SUPER_ADMIN` in the same file.
+A permission added without that row is one the platform administrator does not
+hold.
+
 ## Conventions
 
 - UUID primary keys, generated with `gen_random_uuid()`.
@@ -40,23 +53,73 @@ plan: tables are created by the phase that owns them.
 
 | Table              | Notes                                                                 |
 | ------------------ | --------------------------------------------------------------------- |
-| `users`            | Unique `citext` email, password hash, status, `platform_role_id` nullable |
+| `users`            | Unique `citext` email, password hash, status, `platform_role_id` nullable, lockout counters, `password_changed_at` |
 | `permissions`      | Global catalog. `code` is unique and reads `resource:action`           |
 | `roles`            | `scope` is `PLATFORM` or `WORKSPACE`, with a check constraint tying scope to the presence of `workspace_id`. Unique on `(workspace_id, slug)`. `is_system` rows cannot be deleted from the admin panel |
 | `role_permissions` | Join. The per-workspace mapping the admin panel edits                  |
 | `user_tokens`      | Email verification and password reset. Hashed, single use, expiring    |
-| `refresh_tokens`   | Hashed, rotating, revocable                                            |
+| `refresh_tokens`   | Hashed, rotating, revocable. One row per issued token, chained by `session_id` |
 
-The two token tables depend on the **proposed** authentication design and are not
-settled.
+The authentication design behind the two token tables is now approved. See
+*Identity and authentication* in `architecture.md`.
+
+Three constraints in this group carry weight and are worth stating plainly.
+
+**Email uniqueness is partial.** The unique index on `users.email` applies only
+where `deleted_at` is null, so removing a person does not reserve their address
+forever. The column is `citext`, so two addresses differing only in case cannot
+both exist.
+
+**Role slugs use `NULLS NOT DISTINCT`.** A plain unique index on
+`(workspace_id, slug)` would treat every null workspace as distinct and would
+happily allow two platform roles called `SUPER_ADMIN`. PostgreSQL 15 introduced
+`UNIQUE NULLS NOT DISTINCT`, and we are on 16.
+
+**A member's role is tied to their workspace by the database, not by a service
+check.** `roles` carries a redundant `UNIQUE (id, workspace_id)`, and
+`workspace_members` references it with a composite foreign key on
+`(role_id, workspace_id)`. Assigning a role from another workspace is then not a
+bug that review has to catch, it is a write the database refuses. A platform role
+has a null workspace and so cannot satisfy that key at all, which means no
+workspace member can ever be given `SUPER_ADMIN`. That is the desired rule and it
+costs one extra index.
+
+**A platform role can only be a platform role.** `users` carries
+`platform_role_scope` beside `platform_role_id`, and the key references
+`roles (id, scope)`. The redundant column is what makes the rule enforceable: a
+foreign key is not checked when any of its columns is null, so a key on
+`roles (id)` alone could prove the row was a role but never that it was
+platform-scoped. Two checks close the remaining gaps, one requiring the pair to
+be wholly present or wholly absent, the other pinning the scope to `PLATFORM`.
+Assigning a workspace role is therefore a write PostgreSQL refuses rather than a
+rule a service is trusted to remember. The application reinforces it from the
+other side: `PlatformRoleService.assignSuperAdmin` takes no role identifier, so
+naming the wrong role is not expressible in ordinary code.
+
+**Membership rows do not outlive the person.** Removing an account deletes its
+`workspace_members` rows rather than flagging them, which follows the rule above
+that soft deletion never applies to a join table. The alternative, keeping them
+and filtering at read time, would make a page of twenty sometimes return
+nineteen and would put the same condition into every future query over members.
+The record of who belonged to what and when is the audit log's, and arrives in
+phase six. A deactivation removes nothing, because the person is expected back.
+
+`refresh_tokens` records the address and user agent of the session that created
+it. This is personal data held for one purpose: letting a person see and end
+their own sessions. It is never returned by any other endpoint and never
+written to a log.
+
+Rows in `user_tokens` and `refresh_tokens` are never deleted in this phase.
+Expiry is checked on use, so a stale row grants nothing; it only occupies space.
+The scheduled purge is hardening-phase work.
 
 ### Workspace and teams
 
 | Table                   | Notes                                                            |
 | ----------------------- | ---------------------------------------------------------------- |
-| `workspaces`            | Root scope for everything below                                   |
-| `workspace_members`     | One role per user per workspace. Unique on `(workspace_id, user_id)`. The role must belong to the same workspace |
-| `workspace_invitations` | Hashed token, expiry, status                                      |
+| `workspaces`            | Root scope for everything below. Created in phase two with identity columns only, because roles and memberships cannot reference a table that does not exist. Settings and lifecycle arrive in phase three |
+| `workspace_members`     | One role per user per workspace. Unique on `(workspace_id, user_id)`. The role must belong to the same workspace, enforced by the composite foreign key described above |
+| `workspace_invitations` | Hashed token, expiry, status. One pending invitation per address per workspace, enforced by a partial unique index |
 | `teams`                 | `lead_user_id` is a single column, since the requirements say assign a team lead in the singular. The lead must be a member |
 | `team_members`          | Join. Unique on `(team_id, user_id)`                              |
 
