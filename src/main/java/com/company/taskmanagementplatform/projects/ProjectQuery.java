@@ -15,6 +15,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 
 import com.company.taskmanagementplatform.common.error.BadRequestException;
+import com.company.taskmanagementplatform.labels.Label;
 
 /**
  * Turns a filter, a sort and a caller's reach into one query.

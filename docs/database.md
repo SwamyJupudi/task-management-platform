@@ -20,6 +20,7 @@ Applied so far:
 | `V3`    | Seed data: the global permission catalog, the single `SUPER_ADMIN` platform role, and an explicit `role_permissions` row joining that role to every permission in the catalog. Workspace roles are seeded in code when a workspace is created, so they are not migration data |
 | `V4`    | Workspace settings and lifecycle columns, the `teams` and `team_members` tables, seven new permissions mapped to `SUPER_ADMIN`, and a backfill giving the new grants to workspace roles that already existed |
 | `V5`    | Projects: `projects`, `project_members`, and the shared `labels` catalog with `project_labels`. Seven project permissions, mapped and backfilled the same way |
+| `V6`    | Tasks: `tasks`, `project_task_counters`, `subtasks`, `task_labels` and `task_dependencies`. Seven task permissions, mapped and backfilled the same way |
 
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
@@ -136,11 +137,52 @@ is an ordinary state. `NOT NULL` would mean an owner could never leave the
 workspace, and would force the cleanup to invent a replacement rather than clear
 the column and let somebody decide.
 
-**Project progress is stored and not yet maintained.** The requirements list it as
-a project field and the rule that derives it needs tasks, which arrive in phase
-five. The column exists with a check constraint bounding it to 0-100, is written
-as zero on creation, and nothing in the projects module updates it. See the
-proposed rule at the end of this document.
+**Project progress is derived, as of `V6`.** The column has a check constraint
+bounding it to 0-100 and is rewritten by one statement whenever a task or subtask
+changes. See the rule at the end of this document.
+
+**A task's people are pinned by two different keys, on purpose.** `tasks` keys
+`(project_id, assignee_user_id)` into `project_members` and `(workspace_id,
+reporter_user_id)` into `workspace_members`. The assignee is the narrower rule
+because it is what makes task visibility coherent: somebody cannot hold work in a
+project they are not on, so "tasks assigned to me" is a subset of "tasks I can
+see" by construction. The reporter is the wider one because an administrator may
+raise a task on a project they are not a member of, and pinning them to the
+project would refuse an ordinary write.
+
+The consequence is the familiar one, one level deeper: **removing somebody from a
+project is refused while they still hold a task on it**, and removing them from a
+workspace is refused while they hold or reported one anywhere in it. The tasks and
+subtasks modules clear that state on the events published before the rows are
+deleted, and they are ordered ahead of the projects module's own cleanup, which
+deletes the very rows those keys point at. Two listeners sharing a precedence
+would run in an order Spring does not define, so the tasks pair sit at highest
+precedence and `ProjectCleanupListener` a hundred behind them.
+
+**A task number is never given back.** `tasks (project_id, task_number)` is unique
+and, alone among the uniques in this schema, is *not* partial on `deleted_at`.
+Every other one excludes deleted rows so a name or key becomes free again; this
+one must not, because a link to `PROJ-12` has to keep meaning one task. Projects
+therefore show gaps in their numbering, which is the price of a stable identifier.
+
+**Numbering is safe under concurrent creation because it is one statement.**
+`project_task_counters` is written by an insert with `ON CONFLICT DO UPDATE` that
+increments and returns; conflicting creators block on the row and each leaves with
+a distinct number. `SELECT max(task_number) + 1` would be a read followed by a
+write, which two transactions interleave inside, and which passes every test that
+does not run them at once.
+
+**A dependency cannot leave its project.** Both ends of `task_dependencies` key
+into `tasks (id, project_id)`, so a cross-project dependency is unrepresentable
+and a cross-workspace one is too, since the project pins the workspace. It also
+closes an information leak: a dependency reaching into another project would render
+a blocker's identifier to somebody who cannot see the project it lives in.
+
+**Completion timestamps cannot disagree with their status.** Both `tasks` and
+`subtasks` carry `CHECK ((status = 'DONE') = (completed_at IS NOT NULL))`, the same
+technique `workspaces.status` and `archived_at` use. The requirements ask a subtask
+to track completion *and* status; they are one fact, and this is what stops them
+becoming two.
 
 **The workspace default role is keyed the same way.** `default_role_id` references
 `roles (id, workspace_id)`, so one workspace cannot be pointed at another's role,
@@ -187,9 +229,10 @@ The scheduled purge is hardening-phase work.
 | `labels`            | One workspace-scoped catalog, shared by projects and tasks. The requirements say tags on projects and labels on tasks; two near-identical tables would earn nothing |
 | `project_labels`    | Join                                                                  |
 | `task_labels`       | Join                                                                  |
-| `tasks`             | Status `TODO/IN_PROGRESS/REVIEW/DONE`, per-project sequential `task_number`, `board_position` for board ordering |
-| `subtasks`          | A separate table, not a self-referencing task, because the requirements list SubTask as its own entity with a narrower field set |
-| `task_dependencies` | Unique pair, with a check that a task cannot block itself. Cycles are prevented in the service layer |
+| `tasks`             | Status `TODO/IN_PROGRESS/REVIEW/DONE`, priority `LOW/MEDIUM/HIGH/CRITICAL`, per-project sequential `task_number`, `board_position` for board ordering, effort in whole minutes. Soft deleted |
+| `project_task_counters` | One row per project holding the next task number. Written only by an upsert that increments and returns, which is what makes concurrent creation safe |
+| `subtasks`          | A separate table, not a self-referencing task, because the requirements list SubTask as its own entity with a narrower field set. Shares the task status values; completion is `status = DONE`. Soft deleted |
+| `task_dependencies` | Unique pair, with a check that a task cannot block itself and composite keys confining both ends to one project. Cycles are prevented in the service layer |
 
 ### Collaboration, notifications, audit
 
@@ -210,7 +253,11 @@ Created with the tables that need them, not retrofitted.
 | `tasks (project_id, status)`             | Board view                      |
 | `tasks (assignee_user_id, status)`       | My Tasks                        |
 | `tasks (workspace_id, due_date)`         | Calendar view, overdue reports  |
-| Full text over task title and description | Global search                  |
+| `tasks (workspace_id, project_id)`       | The workspace-wide task listing |
+| `subtasks (task_id)`                     | One task's checklist            |
+| `subtasks (assignee_user_id, status)`    | Personal workload               |
+| `task_dependencies (depends_on_task_id)` | What a task blocks              |
+| `task_labels (label_id)`                 | Filtering by label              |
 | `notifications (recipient_user_id, read_at)` | Unread badge and history    |
 | `activity_logs (workspace_id, created_at desc)` | Audit browsing           |
 | `activity_logs (entity_type, entity_id)` | History for one record          |
@@ -223,27 +270,59 @@ Created with the tables that need them, not retrofitted.
 | `project_members (project_id)`           | One project's roster            |
 | `project_members (user_id)`              | Visibility, and cleanup         |
 
-All partial on non-deleted rows where the table is soft-deletable.
+All partial on non-deleted rows where the table is soft-deletable, except the
+unique on `tasks (project_id, task_number)`, for the reason given above.
 
-## Proposed business rule: project progress
+Full text over task title and description is **not** created yet. Phase five folds
+the search term and matches the title and the rendered `PROJ-12` form, narrowed
+first by the visibility predicate and by paging. The trigram or GIN index, and the
+extension it needs, belong with the other query tuning in the hardening phase.
+Shipping an index nothing queries would be worse than not shipping it.
 
-**Approved. The column exists as of `V5` and is not yet maintained; the
-derivation arrives in phase five with tasks.**
+## Business rule: project progress
+
+**Implemented in phase five. The column was added in `V5` and left at zero until
+there were tasks to derive it from.**
 
 The requirements list Progress as a project field but do not say who sets it.
-Letting a person type it guarantees it will be wrong, so the proposal is to
-derive it.
+Letting a person type it guarantees it will be wrong, so it is derived.
 
-- Progress is the share of the project's non-deleted tasks that are `DONE`,
-  expressed as a whole percentage, rounded down.
-- A task with subtasks contributes fractionally: its own share is the proportion
-  of its non-deleted subtasks that are complete. A task with no subtasks
-  contributes zero or one.
-- A project with no tasks has a progress of zero, not null.
-- Recalculated when a task or subtask changes status, or is created or deleted,
-  and stored on the project so reads stay cheap.
+Over the project's non-deleted tasks:
 
-Until this is approved the column exists and is not maintained.
+```
+contribution(t) = 1                              if t.status = DONE
+                = doneSubtasks(t) / subtasks(t)  if t has live subtasks
+                = 0                              otherwise
+
+progress = floor(100 * sum(contribution) / count(tasks))   0 if there are no tasks
+```
+
+- **`DONE` wins over an unfinished checklist.** This is the one clarification phase
+  five made to the rule as first written. A task marked done is done; averaging it
+  with its leftovers would report less progress than there actually is. The
+  fraction applies only to tasks that are not yet done.
+- Only `DONE` counts. `IN_PROGRESS` and `REVIEW` contribute nothing on their own,
+  because a percentage that moved when nothing finished would be a guess presented
+  as a measurement. Partial credit comes from subtasks, which are the requirements'
+  own unit of partial completion.
+- Deleted tasks and deleted subtasks leave both sides of their fraction. A project
+  whose only task is deleted reads zero, not undefined.
+- Rounded down, so 100 means finished. Computed in `numeric`, never floating point,
+  so an all-done project cannot read 99.
+- Recalculated when a task or subtask is created, deleted, or moved between
+  statuses, and stored on the project so reads stay cheap.
+
+**It is written by one statement**, `UPDATE projects SET progress = (aggregate)`,
+so two people finishing tasks in the same project cannot lose each other's update
+and no row has to be locked. The statement lives in `projects`, which owns the
+column, and its subquery names `tasks` and `subtasks`. That is the one place a
+module reads another's tables, and it is a deliberate exception: computing the
+number in `tasks` and handing it over needs a lock to be correct and can still
+leave a permanently stale value when the loser of a race writes last.
+
+`updated_at` on the project is deliberately not touched. Progress is derived, and
+bumping the timestamp every time somebody moved a card would make "last edited"
+meaningless.
 
 ## Backup and recovery
 

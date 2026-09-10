@@ -89,6 +89,34 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void theTaskRoutesAreAmongTheOnesScanned() {
+        // Tasks add a whole module of routes, including the first ones nested three
+        // levels deep. The sweep protects a route by walking over it, so a route it
+        // never sees is a route it never protected.
+        List<String> mapped = mappedRoutes().stream().map(Route::describe).toList();
+
+        assertThat(mapped)
+                .contains(
+                        "POST /api/v1/workspaces/{workspaceId}/projects/{projectId}/tasks",
+                        "GET /api/v1/workspaces/{workspaceId}/projects/{projectId}/tasks",
+                        "GET /api/v1/workspaces/{workspaceId}/tasks",
+                        "GET /api/v1/workspaces/{workspaceId}/tasks/{taskId}",
+                        "PATCH /api/v1/workspaces/{workspaceId}/tasks/{taskId}",
+                        "DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}",
+                        "POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/status",
+                        "PUT /api/v1/workspaces/{workspaceId}/tasks/{taskId}/assignee",
+                        "DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/assignee",
+                        "GET /api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks",
+                        "POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks",
+                        "PATCH /api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks/{subtaskId}",
+                        "DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks/{subtaskId}",
+                        "POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks/{subtaskId}/status",
+                        "GET /api/v1/workspaces/{workspaceId}/tasks/{taskId}/dependencies",
+                        "POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/dependencies",
+                        "DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/dependencies/{dependsOnTaskId}");
+    }
+
+    @Test
     void theWorkspaceTeamAndProjectRoutesAreAmongTheOnesScanned() {
         // The matrix protects a route by walking over it, so a route it never sees
         // is a route it never protected. Naming a few of the newest ones keeps the

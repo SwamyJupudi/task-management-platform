@@ -274,16 +274,176 @@ set rather than a sequence of additions.
 ### Progress
 
 The requirements list Progress as a project field. The rule that derives it needs
-tasks, so the column exists, is written as zero, and is not maintained by this
-module. Phase five implements the derivation. Nothing pretends to calculate it in
-the meantime, which is the honest version of a field that cannot yet mean
-anything.
+tasks, so phase four left the column at zero and phase five implements the
+derivation. See *Tasks and subtasks* below.
 
 ### Sorting
 
 A listing sorts only by an allowlist of fields. Passing a client's sort straight
 through lets a query parameter probe the shape of the entity and order by columns
 with no index behind them, and neither failure is visible from the response.
+
+## Tasks and subtasks
+
+Reviewed and approved. Built in phase five.
+
+A task belongs to exactly one project and, through it, to one workspace. It has at
+most one assignee and at most one reporter, both nullable and both pinned by the
+database rather than by a service check. Moving a task between projects is not
+supported: the number it is known by is allocated per project, so a move would
+either break a stable identifier or renumber into a foreign sequence.
+
+### Numbering
+
+Tasks are known as `PROJECTKEY-1`, `PROJECTKEY-2`, from the project key phase four
+made unique and uppercase per workspace. Only the number is stored; the rendered
+form is composed when a task is mapped to a response, so there is no third copy of
+the same fact to keep in step.
+
+Allocation is one statement against a `project_task_counters` row: an insert with
+`ON CONFLICT DO UPDATE` that increments and returns. Concurrent creators block on
+the row and each leaves with a distinct number, so there is no read followed by a
+write for two transactions to interleave inside. `SELECT max(task_number) + 1`
+would have been exactly that race, and it passes every single-threaded test.
+
+The counter only moves forward. **A deleted task never gives its number back**, so
+a project's numbering shows gaps. That is the price of an identifier people put in
+links, and it is paid deliberately. The unique on `(project_id, task_number)` is
+consequently the one unique in this schema that is not partial.
+
+### Lifecycle
+
+`TODO`, `IN_PROGRESS`, `REVIEW`, `DONE`. The requirements print these under *Task
+Views* as the columns of a Kanban board and state no transition rules; the matrix
+is ours and is approved:
+
+| From | May move to |
+| --- | --- |
+| TODO | IN_PROGRESS, DONE |
+| IN_PROGRESS | TODO, REVIEW, DONE |
+| REVIEW | IN_PROGRESS, DONE |
+| DONE | TODO, IN_PROGRESS, REVIEW |
+
+It is deliberately permissive. A strictly linear reading would forbid sending work
+back from review, which is the most common real move there is, and would make a
+card undraggable leftwards on the board the requirements ask for. Nothing is a
+dead end, so finishing a task stays safe to do. Finishing straight from TODO is
+allowed, unlike a project moving from planning to completed: a task is smaller,
+and a chore that needed no visible work is an ordinary thing to tick off.
+
+What stays refused is moving to or from review without passing through in
+progress. Review is a statement about work that exists. A rejected move answers
+409, and so does a move to the status a task already holds, because a silent no-op
+would be indistinguishable from a real transition in the activity log.
+
+Subtasks share the enum and the matrix. They are the same four columns on the same
+board, and a second state machine with the same states would be a second thing to
+keep in step.
+
+### Subtasks
+
+A separate table rather than a self-referencing task, because the requirements list
+SubTask as its own entity with a narrower field set: completion, assignee, status
+and due date. They also name completion and status separately, and those are one
+fact, so **completion is `status = DONE`**, recorded with a timestamp the database
+holds consistent with the status. Two independent fields would have needed a rule
+for what a completed subtask still in review means.
+
+A subtask carries no description. The requirements show subtasks as a checklist of
+titles, and a body field would be inventing a requirement.
+
+Authorization is entirely the parent task's: editing the checklist needs
+`task:update`, ticking an item off needs `task:change_status`, and there is no
+subtask permission family, because a subtask is part of a task rather than a thing
+to hold rights over separately.
+
+### Visibility
+
+**A task is visible exactly when its project is.** Nothing else. That composes with
+`Workspace → Team → Project → ProjectMember` by reusing it rather than restating
+it, which is what keeps the two from drifting apart. There is deliberately no
+`task:read_any`: `project:read_any` already widens both at once.
+
+The assignee is a foreign key into `project_members`, so a task cannot be assigned
+to somebody outside the project holding it. "Tasks assigned to me" is therefore a
+subset of "tasks I can see" by construction rather than by a check, and My Tasks
+cannot become a way past the scope rule.
+
+A task in a project the caller cannot reach answers 404, the same as one from
+another workspace.
+
+### Write scope
+
+Without `task:manage_any`, a caller may change a task if they are its assignee, its
+reporter, the owner of its project, or the lead of that project's team. An employee
+therefore edits their own work and the tickets they raised; a lead reaches
+everything in the projects they run; an administrator holds the workspace-wide
+grant and reaches all of them.
+
+Assignment is its own permission, `task:assign`, which an employee does not hold:
+the requirements give them create, update and status changes and describe no
+assignment. Deletion is `task:delete`, held by the administrator alone, so a team
+lead cannot remove work in a project they run, exactly as they cannot delete the
+project.
+
+### Dependencies
+
+The requirements name TaskDependency and say nothing about kinds of dependency, so
+this is a single blocking relationship with no type column. Adding BLOCKS, RELATES
+and DUPLICATES would mean inventing semantics for each.
+
+Both ends are keyed to the same project, which makes a cross-workspace dependency
+unrepresentable and closes an information leak at the same time: a cross-project
+dependency would render a blocker's identifier to somebody who cannot see the
+project it lives in. Widening this later breaks no existing row.
+
+Self-dependency and duplicate pairs are refused by constraints. Cycles cannot be
+stated as a constraint, so before inserting, one recursive query asks whether the
+task is already reachable from its proposed blocker. The check and the insert are
+taken under a transaction-scoped advisory lock on the project, because without it
+two requests could each see a graph with no cycle and together close one.
+
+Nothing prevents a blocked task from being started or finished. The requirements
+state no such rule, so the relationship is surfaced and not enforced: the response
+carries both directions and a `blocked` filter exists.
+
+### Progress
+
+Derived, not typed. Over a project's live tasks, a task counts one when it is
+`DONE`, otherwise the share of its live subtasks that are done, otherwise zero, and
+the whole is a percentage rounded down. **`DONE` wins over an unfinished
+checklist**, which is the one clarification this phase made to the rule phase four
+recorded: a task marked done is done, and averaging it with its leftovers would
+report less than the truth.
+
+It is written by one statement inside the transaction that changed the work, so two
+people finishing tasks in the same project cannot lose each other's update and no
+row has to be locked. That statement lives in `projects`, which owns the column,
+and its subquery names the task tables. **This is the one place a module reads
+another's tables, and it is deliberate.** The alternative, computing the number in
+`tasks` and handing it over, needs a lock to be correct and can still leave a
+permanently stale value when the loser of a race writes last.
+
+### Module boundaries
+
+`projects` publishes one facade rather than opening its package. Tasks need four
+things from it: the read scope a caller has over projects, the facts needed to
+authorize inside one project, the projects belonging to a team, and the trigger
+that re-derives progress. Every one of them answers with values rather than
+entities, because a guard runs in its own read-only transaction and an entity from
+it would arrive detached.
+
+The label catalog moved out of `projects` into its own package when tasks arrived.
+It had lived there while projects were its only user, and leaving it would have
+meant either `tasks` reaching into another module's table or a second copy of the
+folding rules. `TaskAccessGuard` is public for the same kind of reason: `subtasks`
+is a module of its own and authorizes through the parent task, and a second copy of
+those checks would be worse than one widened class.
+
+Deleting a project soft-deletes its tasks and their subtasks, on the event. Leaving
+them live and filtering at read time is worse than it sounds: an administrator's
+listing narrows on nothing, so a removed project's work would keep appearing in
+their board and calendar with no project to click through to.
 
 ## Identity and authentication
 
@@ -516,7 +676,7 @@ Starts alongside the identity phase.
 | 2     | Identity. User, Role, Permission, authentication, authorization guards, workspace membership and invitations, and the minimal workspace row they require. |
 | 3     | Workspace lifecycle and settings, and teams. **Done.**                  |
 | 4     | Projects and project membership. **Done.**                              |
-| 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries.   |
+| 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries. **Done.** |
 | 6     | Comments and mentions, attachments, activity and audit logging.         |
 | 7     | Notifications with read state, history, and the deadline scheduler.     |
 | 8     | Dashboards, reports, analytics, and the indexes they need.              |
@@ -535,7 +695,10 @@ above.
 | Item                       | State                                                              |
 | -------------------------- | ------------------------------------------------------------------ |
 | Storage provider           | **Unspecified** by the requirements. Kept provider-agnostic behind a port. Chosen before attachments. |
-| Task dependency semantics  | **Unspecified.** Modeled as a single blocking relationship.        |
+| Task dependency semantics  | **Settled.** A single blocking relationship, confined to one project, with no type column. Built in phase five. |
 | Notification delivery      | **Unspecified.** Polling first, server-sent events as a later swap. |
-| Project progress rule      | **Approved.** Column added in `V5`; derivation lands with tasks in phase five. |
+| Project progress rule      | **Implemented** in phase five, with `DONE` winning over an unfinished checklist. |
+| Blocked tasks              | **Surfaced, not enforced.** The requirements state no rule about starting or finishing blocked work. Revisit only with evidence. |
+| Task full-text search      | Deferred to hardening. `q` folds and matches the title and the rendered key; the trigram or GIN index belongs with the other query tuning. |
+| Kanban reordering          | Deferred. `board_position` exists, sorts, and is settable; gapless drag ordering is its own design. |
 | Custom workspace roles     | Deferred. Schema supports them, none are seeded.                    |

@@ -120,6 +120,52 @@ class OpenApiContractIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void documentsTheTaskEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/tasks'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/tasks'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}'].patch").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}'].delete").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/status'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/assignee'].put")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/assignee'].delete")
+                        .exists());
+    }
+
+    @Test
+    void documentsTheSubtaskAndDependencyEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks'].post")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks/{subtaskId}'].patch")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks/{subtaskId}'].delete")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/subtasks/{subtaskId}/status'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/dependencies'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/dependencies'].post")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/dependencies/{dependsOnTaskId}'].delete")
+                        .exists());
+    }
+
+    @Test
     void keepsTheSharedErrorShapeInTheDocument() throws Exception {
         // The foundation's promise: one error body across every endpoint.
         mockMvc.perform(get("/v3/api-docs"))

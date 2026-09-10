@@ -38,4 +38,16 @@ public final class ProjectEvents {
     public record ProjectMemberRemoved(UUID workspaceId, UUID projectId, UUID userId, UUID actorUserId) {}
 
     public record ProjectDeleted(UUID workspaceId, UUID projectId, UUID actorUserId) {}
+
+    /**
+     * The derived progress moved.
+     *
+     * <p>Published by this module, but caused by the tasks module: progress is re-derived after
+     * anything that could change it, and this fires only when the stored number actually moved.
+     * Phase eight's dashboards want real changes rather than every card dragged one column right.
+     *
+     * <p>It carries no actor. Nobody sets progress; it is a consequence, and naming a person as
+     * having performed it would put a misleading line in the activity log.
+     */
+    public record ProjectProgressChanged(UUID workspaceId, UUID projectId, int previousPercent, int currentPercent) {}
 }

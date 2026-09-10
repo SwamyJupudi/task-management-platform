@@ -169,6 +169,56 @@ class WorkspaceRoleGrantsIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void anAdministratorMayRunTasks() {
+        UUID workspaceId = freshWorkspace();
+
+        assertThat(grantedTo(workspaceId, "ADMIN"))
+                .contains(
+                        Permissions.TASK_READ,
+                        Permissions.TASK_CREATE,
+                        Permissions.TASK_UPDATE,
+                        Permissions.TASK_ASSIGN,
+                        Permissions.TASK_CHANGE_STATUS,
+                        Permissions.TASK_DELETE,
+                        Permissions.TASK_MANAGE_ANY);
+    }
+
+    @Test
+    void aTeamLeadAssignsAndTracksTasksButRemovesNone() {
+        // The requirements say a team lead manages team tasks, assigns them and
+        // updates their status. Deleting is not among them, and removing work stays
+        // with the administrator the same way removing a project does.
+        UUID workspaceId = freshWorkspace();
+        List<String> granted = grantedTo(workspaceId, "TEAM_LEAD");
+
+        assertThat(granted)
+                .contains(
+                        Permissions.TASK_READ,
+                        Permissions.TASK_CREATE,
+                        Permissions.TASK_UPDATE,
+                        Permissions.TASK_ASSIGN,
+                        Permissions.TASK_CHANGE_STATUS);
+        assertThat(granted).doesNotContain(Permissions.TASK_DELETE, Permissions.TASK_MANAGE_ANY);
+    }
+
+    @Test
+    void anEmployeeCreatesAndUpdatesTasksButAssignsNothing() {
+        // The scope half does the rest: without task:manage_any they reach only the
+        // tasks they are assigned or raised themselves.
+        UUID workspaceId = freshWorkspace();
+        List<String> granted = grantedTo(workspaceId, "EMPLOYEE");
+
+        assertThat(granted)
+                .contains(
+                        Permissions.TASK_READ,
+                        Permissions.TASK_CREATE,
+                        Permissions.TASK_UPDATE,
+                        Permissions.TASK_CHANGE_STATUS);
+        assertThat(granted)
+                .doesNotContain(Permissions.TASK_ASSIGN, Permissions.TASK_DELETE, Permissions.TASK_MANAGE_ANY);
+    }
+
+    @Test
     void aNewWorkspaceStartsWithAnEmployeeDefaultRole() {
         // The setting an invitation falls back to. Null here would make the first
         // invitation that omits a role fail for no reason a user could act on.

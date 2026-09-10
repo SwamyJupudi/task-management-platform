@@ -1,4 +1,4 @@
-package com.company.taskmanagementplatform.projects;
+package com.company.taskmanagementplatform.labels;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -18,13 +18,22 @@ import jakarta.persistence.Table;
  * labels on a task, but they are the same thing used twice, and two near-identical tables would earn
  * nothing beyond a second place to keep in step.
  *
- * <p>There is no label administration API in this phase. Tagging a project get-or-creates the label
- * by folded name, which is enough to make tags work and leaves the catalog screen to the admin
- * panel. Labels are not soft deleted: a tag nobody uses is not worth restoring.
+ * <p>The catalog moved into its own package when tasks arrived. It had lived in {@code projects}
+ * while projects were its only user, and leaving it there would have meant either {@code tasks}
+ * reaching into another module's tables or a second copy of the folding rules. Neither is worth it
+ * for a table both modules genuinely share.
+ *
+ * <p>The class is public because {@code projects} and {@code tasks} each name it in a criteria
+ * subquery when filtering by tag. Its accessors are not: the catalog is read and written through
+ * {@link LabelCatalog}.
+ *
+ * <p>There is no label administration API in this phase. Tagging get-or-creates the label by folded
+ * name, which is enough to make tags work and leaves the catalog screen to the admin panel. Labels
+ * are not soft deleted: a tag nobody uses is not worth restoring.
  */
 @Entity
 @Table(name = "labels")
-class Label {
+public class Label {
 
     @Id
     @GeneratedValue

@@ -23,17 +23,36 @@ import com.company.taskmanagementplatform.workspaces.WorkspaceMemberRemovedEvent
  * Until both are gone PostgreSQL refuses to delete the membership, so this is the step that makes
  * the removal possible rather than tidying that could be deferred.
  *
- * <p>Ordered first, ahead of the listener in {@code workspaces} that deletes the membership row
- * itself. The flush is the other half: Hibernate may order the statements in a flush by entity type
- * rather than by call order, so the work is forced out before the publisher continues.
+ * <p>Ordered ahead of the delete in {@code workspaces} that removes the membership row itself. The
+ * flush is the other half: Hibernate may order the statements in a flush by entity type rather than
+ * by call order, so the work is forced out before the publisher continues.
+ *
+ * <p>It is ordered <em>behind</em> the tasks and subtasks listeners, and the gap in the precedence
+ * is deliberate rather than incidental. A task's assignee is a foreign key into {@code
+ * project_members}, so deleting those rows here is refused while somebody still holds a task on the
+ * project.
+ *
+ * <p>The {@link Order} annotations sit on the <em>methods</em>. They were on the class until phase
+ * five, where that turned out to be decorative: {@code ApplicationListenerMethodAdapter} resolves a
+ * listener's order from the annotated method alone and ignores the declaring class, so every
+ * listener here was really at {@code LOWEST_PRECEDENCE} and the sequence was bean registration
+ * order. Nothing depended on it until tasks arrived, and then {@code TaskCascadeIT} failed exactly
+ * the way an unordered listener would.
  *
  * <p>Ownership is cleared rather than reassigned, because choosing somebody's replacement is not a
  * decision this code is in a position to make. A team deletion clears the project's team for the
  * same reason: the project outlives the team and somebody has to decide where it goes next.
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
 class ProjectCleanupListener {
+
+    /**
+     * Behind the tasks and subtasks listeners, which run at {@link Ordered#HIGHEST_PRECEDENCE}.
+     *
+     * <p>The room between them is left so that a future module hanging rows off a project membership
+     * has somewhere to sit without renumbering everything.
+     */
+    static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 100;
 
     private static final Logger log = LoggerFactory.getLogger(ProjectCleanupListener.class);
 
@@ -46,6 +65,7 @@ class ProjectCleanupListener {
     }
 
     @EventListener
+    @Order(ProjectCleanupListener.ORDER)
     @Transactional
     void onWorkspaceMemberRemoved(WorkspaceMemberRemovedEvent event) {
         List<Project> owned =
@@ -72,6 +92,7 @@ class ProjectCleanupListener {
      * in {@code workspaces} removes all of its rows in one statement, so nothing narrower would do.
      */
     @EventListener
+    @Order(ProjectCleanupListener.ORDER)
     @Transactional
     void onUserDeleted(UserDeletedEvent event) {
         UUID userId = event.userId();

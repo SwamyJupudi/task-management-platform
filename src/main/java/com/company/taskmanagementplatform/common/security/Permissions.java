@@ -73,6 +73,25 @@ public final class Permissions {
     /** The write half, widening {@link #PROJECT_UPDATE} and {@link #PROJECT_MANAGE_MEMBERS} to every project. */
     public static final String PROJECT_MANAGE_ANY = "project:manage_any";
 
+    public static final String TASK_READ = "task:read";
+    public static final String TASK_CREATE = "task:create";
+    public static final String TASK_UPDATE = "task:update";
+    public static final String TASK_ASSIGN = "task:assign";
+    public static final String TASK_CHANGE_STATUS = "task:change_status";
+    public static final String TASK_DELETE = "task:delete";
+
+    /**
+     * The write half of the scope layer for tasks.
+     *
+     * <p>Without it, a caller reaches a task only as its assignee, as its reporter, as the owner of
+     * its project, or as the lead of that project's team. With it, every task in the workspace.
+     *
+     * <p>There is deliberately no {@code task:read_any} beside it. Task read scope <em>is</em>
+     * project read scope, so {@link #PROJECT_READ_ANY} already widens it, and a second read grant
+     * would be a parallel model with its own resolution path that no test of the first one covers.
+     */
+    public static final String TASK_MANAGE_ANY = "task:manage_any";
+
     /** The catalog as data, for the test that compares it against the seeded rows. */
     public static final Set<String> ALL = Set.of(
             USER_READ,
@@ -104,7 +123,14 @@ public final class Permissions {
             PROJECT_UPDATE,
             PROJECT_DELETE,
             PROJECT_MANAGE_MEMBERS,
-            PROJECT_MANAGE_ANY);
+            PROJECT_MANAGE_ANY,
+            TASK_READ,
+            TASK_CREATE,
+            TASK_UPDATE,
+            TASK_ASSIGN,
+            TASK_CHANGE_STATUS,
+            TASK_DELETE,
+            TASK_MANAGE_ANY);
 
     private Permissions() {}
 }

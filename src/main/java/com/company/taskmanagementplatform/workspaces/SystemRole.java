@@ -45,7 +45,14 @@ enum SystemRole {
                     Permissions.PROJECT_UPDATE,
                     Permissions.PROJECT_DELETE,
                     Permissions.PROJECT_MANAGE_MEMBERS,
-                    Permissions.PROJECT_MANAGE_ANY)),
+                    Permissions.PROJECT_MANAGE_ANY,
+                    Permissions.TASK_READ,
+                    Permissions.TASK_CREATE,
+                    Permissions.TASK_UPDATE,
+                    Permissions.TASK_ASSIGN,
+                    Permissions.TASK_CHANGE_STATUS,
+                    Permissions.TASK_DELETE,
+                    Permissions.TASK_MANAGE_ANY)),
 
     /**
      * Leads people inside a workspace. May see the roster, not change it.
@@ -59,6 +66,12 @@ enum SystemRole {
      * project, nor {@code project:read_any}, which would show them projects they have nothing to do
      * with. Creating and removing a project stay with the administrator, who is the project manager
      * the requirements describe.
+     *
+     * <p>Tasks follow it a third time. The requirements say a team lead manages team tasks, assigns
+     * tasks and updates their status, so they hold those codes and not {@code task:manage_any},
+     * which narrows all of them to the tasks in the projects they own or lead the team of. They do
+     * not hold {@code task:delete}: removing work is the administrator's, the same way removing a
+     * project is, and a lead who wants a task gone can say so.
      */
     TEAM_LEAD(
             "Team Lead",
@@ -71,16 +84,32 @@ enum SystemRole {
                     Permissions.TEAM_MANAGE_MEMBERS,
                     Permissions.PROJECT_READ,
                     Permissions.PROJECT_UPDATE,
-                    Permissions.PROJECT_MANAGE_MEMBERS)),
+                    Permissions.PROJECT_MANAGE_MEMBERS,
+                    Permissions.TASK_READ,
+                    Permissions.TASK_CREATE,
+                    Permissions.TASK_UPDATE,
+                    Permissions.TASK_ASSIGN,
+                    Permissions.TASK_CHANGE_STATUS)),
 
-    /** Works in the workspace. Sees who else is in it, and nothing administrative. */
+    /**
+     * Works in the workspace. Sees who else is in it, and nothing administrative.
+     *
+     * <p>The requirements say an employee creates and updates permitted tasks and updates their
+     * status, so those three codes are here and {@code task:assign} is not. Without {@code
+     * task:manage_any} the write scope narrows them to the tasks they are assigned or raised
+     * themselves, which is what "permitted" means in practice.
+     */
     EMPLOYEE(
             "Employee",
             Set.of(
                     Permissions.WORKSPACE_READ,
                     Permissions.MEMBER_READ,
                     Permissions.TEAM_READ,
-                    Permissions.PROJECT_READ));
+                    Permissions.PROJECT_READ,
+                    Permissions.TASK_READ,
+                    Permissions.TASK_CREATE,
+                    Permissions.TASK_UPDATE,
+                    Permissions.TASK_CHANGE_STATUS));
 
     static final String SUPER_ADMIN_SLUG = "SUPER_ADMIN";
 

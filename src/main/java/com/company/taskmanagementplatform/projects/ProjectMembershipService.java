@@ -98,6 +98,14 @@ public class ProjectMembershipService {
      * <p>Refuses to remove the owner, rather than quietly clearing the ownership as a side effect.
      * Losing a project's owner is a decision somebody should make deliberately, and a caller who
      * meant to do both can do them in either order through two explicit requests.
+     *
+     * <p>The event is published <em>before</em> the row is deleted, and the change is flushed in
+     * between. That ordering became load-bearing when tasks arrived: a task's assignee is a foreign
+     * key into {@code project_members}, so PostgreSQL refuses this delete while the person still
+     * holds a task on the project. The tasks module stands them down on the event, inside this
+     * transaction, which is what makes the removal possible at all rather than tidying that could be
+     * deferred. The flush is the other half of it: Hibernate is free to order the statements in a
+     * flush by entity type rather than by the order the calls were made.
      */
     @Transactional
     public void removeMember(UUID workspaceId, UUID projectId, UUID userId, UUID actorUserId) {
@@ -111,8 +119,9 @@ public class ProjectMembershipService {
             throw new ConflictException("That person owns this project. Name a different owner first.");
         }
 
-        members.delete(member);
         events.publishEvent(new ProjectEvents.ProjectMemberRemoved(workspaceId, projectId, userId, actorUserId));
+        members.flush();
+        members.delete(member);
     }
 
     /**

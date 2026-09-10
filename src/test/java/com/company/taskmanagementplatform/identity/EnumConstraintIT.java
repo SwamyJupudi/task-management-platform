@@ -65,6 +65,27 @@ class EnumConstraintIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void taskStatusMatchesItsConstraint() {
+        assertEveryConstantIsAccepted(
+                "tasks_status_check", com.company.taskmanagementplatform.tasks.TaskStatus.class);
+    }
+
+    @Test
+    void taskPriorityMatchesItsConstraint() {
+        assertEveryConstantIsAccepted(
+                "tasks_priority_check", com.company.taskmanagementplatform.tasks.TaskPriority.class);
+    }
+
+    @Test
+    void subtaskStatusMatchesTheSameEnumeration() {
+        // Subtasks share the task state machine, so one enumeration has to satisfy
+        // two constraints. A value added for tasks and forgotten on subtasks would
+        // pass every test that did not happen to tick a checklist item.
+        assertEveryConstantIsAccepted(
+                "subtasks_status_check", com.company.taskmanagementplatform.tasks.TaskStatus.class);
+    }
+
+    @Test
     void theScopeCarriedOnUsersMatchesTheRoleScopeConstant() {
         // The users module cannot import RoleScope, so it mirrors the literal. This
         // is the test that keeps the copy honest.

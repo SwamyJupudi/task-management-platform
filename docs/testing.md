@@ -37,6 +37,7 @@ their infrastructure form. The rest arrive with the code they describe.
 | ----------- | ---------------------------------------------------------------- | ---------- |
 | Unit        | Services, business logic, utilities, validation                  | Every phase |
 | Integration | Auth, project creation, task creation, assignment, permissions   | Phases 2-7 |
+| Concurrency | Refresh rotation, task numbering                                 | Where a race is possible |
 | API         | Every major endpoint                                             | Phases 2-9 |
 | End to end  | Login, create project, add member, create task, assign, complete | Phase 11   |
 
@@ -118,6 +119,48 @@ and so could silently be forgotten.
 
 `ProjectStatusTest` walks the whole transition matrix rather than a happy path,
 including that every status is reachable and that none is a dead end.
+
+## The tasks phase
+
+Five of these earn their place for reasons worth stating, because each covers a
+failure that would otherwise be invisible.
+
+`TaskVisibilityIT` is the one to keep honest, for the same reason
+`ProjectVisibilityIT` is: read scope decides which rows a listing returns rather
+than whether a call is allowed, so a mistake in it leaks the shape of a workspace
+instead of failing loudly. It covers each way a project comes into reach, the case
+where none holds, the case where a filter is used to try to widen the answer, and
+the one that only exists at this level: that My Tasks is a subset of what is
+visible rather than a way past it.
+
+`TaskAuthorizationIT` covers the write half. Every case holds exactly the same
+permission and differs only in the caller's relationship to the task, so nothing in
+it passes because of a permission difference. That is the whole purpose of
+`task:manage_any`, and no other test would notice if it disappeared.
+
+`TaskNumberingConcurrencyIT` is the one a single-threaded suite cannot replace.
+Twelve threads create tasks in one project at the same instant and the numbers must
+come out as exactly one to twelve. `SELECT max(task_number) + 1` passes every other
+test in this repository and fails this one immediately.
+
+`TaskSchemaIT` is written in SQL, like its identity, teams and projects
+counterparts, because the constraints exist so that a mistake in the service layer
+cannot corrupt the data. It proves the assignee and reporter keys, the number
+uniqueness surviving a soft delete, the completion timestamp agreeing with the
+status on both tables, and that a dependency cannot leave its project.
+
+`ProjectProgressIT` tests a formula that lives in SQL. There is deliberately no
+unit test beside it: a unit test would have to reimplement the rule, and a test of
+a reimplementation proves only that two versions agree with each other.
+
+`TaskDependencyIT` covers the cycle rule at three depths, because a single-step
+check passes the direct case and fails the transitive one, and a diamond has to
+stay allowed.
+
+`TaskCascadeIT` covers the other side of the schema rules: the listeners that let
+somebody be removed at all, and the ordering between them. That ordering is the
+fragile part, and getting it wrong produces a failure that appears only when the
+person being removed happens to have work assigned.
 
 ## Mail in tests
 

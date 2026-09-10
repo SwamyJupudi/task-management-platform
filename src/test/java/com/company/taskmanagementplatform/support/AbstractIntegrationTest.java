@@ -38,7 +38,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import({TestMailConfig.class, IdentityFixtures.class})
+@Import({TestMailConfig.class, IdentityFixtures.class, TaskFixtures.class})
 @Testcontainers(disabledWithoutDocker = true)
 public abstract class AbstractIntegrationTest {
 

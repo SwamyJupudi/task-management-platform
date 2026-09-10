@@ -145,7 +145,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 2     | Identity: users, roles, authentication    | Done        |
 | 3     | Workspaces and teams                      | Done        |
 | 4     | Projects                                  | Done        |
-| 5     | Tasks, subtasks, dependencies, views      | Not started |
+| 5     | Tasks, subtasks, dependencies, views      | Done        |
 | 6     | Comments, attachments, activity and audit | Not started |
 | 7     | Notifications                             | Not started |
 | 8     | Dashboards and reports                    | Not started |
@@ -214,16 +214,44 @@ than tidying that could be deferred.
 - Visibility that follows the requirements: an employee sees the projects assigned
   to them, an administrator sees all of them.
 
-Progress is stored and returned as zero. The rule that derives it from tasks
-arrives in phase five; nothing pretends to calculate it before then.
+Progress was stored and returned as zero. Phase five derives it from tasks.
+
+### What the tasks phase delivers
+
+- Tasks with every field the requirements name, inside a project, known by a
+  stable `PROJECTKEY-12` handle that is safe to hand out even when several people
+  create work at the same moment.
+- The four-status board flow, with the legal moves enforced and a rejected one
+  refused rather than silently applied.
+- Subtasks: a checklist under a task, tracking completion, assignee, status and
+  due date.
+- Dependencies: one task waiting on another in the same project, refusing itself,
+  duplicates, and anything that would make two tasks wait on each other.
+- Labels, drawn from the same workspace catalog projects tag themselves from.
+- Search and filtering by project, team, assignee, reporter, status, priority, due
+  date, created date, label and free text, with paging and sorting restricted to
+  an allowlist.
+- Visibility that follows the requirements: an employee sees the work of projects
+  assigned to them, an administrator sees all of it.
+- Project progress, derived from task and subtask completion rather than typed by
+  anybody.
+
+Assignment, status changes and deletion each need their own permission, so a team
+lead assigns and tracks work without being able to delete it, and an employee runs
+their own tasks without being able to hand them to somebody else.
 
 ### What it deliberately does not deliver
 
-Tasks, subtasks, comments, attachments, notifications and reporting.
+Comments, attachments, notifications and reporting.
 
 Team dashboards, workload and task statistics are listed under team management in
-the requirements and are not here. They need tasks to exist, so they arrive with
-the other analytics in phase eight.
+the requirements and are not here. They arrive with the other analytics in phase
+eight.
+
+Tasks cannot be moved between projects, since the number they are known by belongs
+to one. Kanban drag-ordering and full-text search are both deferred: the board
+position column and a folded title search exist, and the reordering design and the
+search index belong with the hardening work.
 
 There is no mail transport, no rate limiting beyond per-account lockout, and no
 cleanup of expired token rows. Each is scheduled work rather than an oversight:
