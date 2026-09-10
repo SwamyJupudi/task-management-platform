@@ -132,6 +132,43 @@ class WorkspaceRoleGrantsIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void anAdministratorMayRunProjects() {
+        UUID workspaceId = freshWorkspace();
+
+        assertThat(grantedTo(workspaceId, "ADMIN"))
+                .contains(
+                        Permissions.PROJECT_CREATE,
+                        Permissions.PROJECT_UPDATE,
+                        Permissions.PROJECT_DELETE,
+                        Permissions.PROJECT_MANAGE_MEMBERS,
+                        Permissions.PROJECT_MANAGE_ANY,
+                        Permissions.PROJECT_READ_ANY);
+    }
+
+    @Test
+    void aTeamLeadManagesProjectsButOnlyTheirOwn() {
+        UUID workspaceId = freshWorkspace();
+        List<String> granted = grantedTo(workspaceId, "TEAM_LEAD");
+
+        assertThat(granted).contains(Permissions.PROJECT_UPDATE, Permissions.PROJECT_MANAGE_MEMBERS);
+        assertThat(granted)
+                .doesNotContain(
+                        Permissions.PROJECT_MANAGE_ANY,
+                        Permissions.PROJECT_READ_ANY,
+                        Permissions.PROJECT_CREATE,
+                        Permissions.PROJECT_DELETE);
+    }
+
+    @Test
+    void anEmployeeSeesAssignedProjectsOnly() {
+        UUID workspaceId = freshWorkspace();
+        List<String> granted = grantedTo(workspaceId, "EMPLOYEE");
+
+        assertThat(granted).contains(Permissions.PROJECT_READ);
+        assertThat(granted).doesNotContain(Permissions.PROJECT_READ_ANY, Permissions.PROJECT_MANAGE_ANY);
+    }
+
+    @Test
     void aNewWorkspaceStartsWithAnEmployeeDefaultRole() {
         // The setting an invitation falls back to. Null here would make the first
         // invitation that omits a role fail for no reason a user could act on.

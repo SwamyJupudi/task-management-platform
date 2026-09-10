@@ -79,6 +79,65 @@ class SystemRoleTest {
     }
 
     @Test
+    void aTeamLeadManagesProjectsWithoutSeeingOrReachingThemAll() {
+        // Both halves of the project scope layer, withheld together. project:update
+        // says what they may do, project:manage_any would widen which projects, and
+        // project:read_any would widen which they can even see. Granting either by
+        // accident is the mistake this test exists to catch.
+        assertThat(SystemRole.TEAM_LEAD.permissionCodes())
+                .contains(
+                        Permissions.PROJECT_READ,
+                        Permissions.PROJECT_UPDATE,
+                        Permissions.PROJECT_MANAGE_MEMBERS);
+
+        assertThat(SystemRole.TEAM_LEAD.permissionCodes())
+                .doesNotContain(
+                        Permissions.PROJECT_READ_ANY,
+                        Permissions.PROJECT_MANAGE_ANY,
+                        Permissions.PROJECT_CREATE,
+                        Permissions.PROJECT_DELETE);
+    }
+
+    @Test
+    void anAdministratorIsTheProjectManagerTheRequirementsDescribe() {
+        assertThat(SystemRole.ADMIN.permissionCodes())
+                .contains(
+                        Permissions.PROJECT_READ,
+                        Permissions.PROJECT_READ_ANY,
+                        Permissions.PROJECT_CREATE,
+                        Permissions.PROJECT_UPDATE,
+                        Permissions.PROJECT_DELETE,
+                        Permissions.PROJECT_MANAGE_MEMBERS,
+                        Permissions.PROJECT_MANAGE_ANY);
+    }
+
+    @Test
+    void anEmployeeSeesAssignedProjectsAndChangesNone() {
+        // The requirements say an employee views assigned projects. Withholding
+        // project:read_any is what makes "assigned" mean anything at all.
+        assertThat(SystemRole.EMPLOYEE.permissionCodes()).contains(Permissions.PROJECT_READ);
+        assertThat(SystemRole.EMPLOYEE.permissionCodes())
+                .doesNotContain(
+                        Permissions.PROJECT_READ_ANY,
+                        Permissions.PROJECT_CREATE,
+                        Permissions.PROJECT_UPDATE,
+                        Permissions.PROJECT_DELETE,
+                        Permissions.PROJECT_MANAGE_MEMBERS,
+                        Permissions.PROJECT_MANAGE_ANY);
+    }
+
+    @Test
+    void everyRoleCanSeeTheProjectsOfItsWorkspace() {
+        // Seeing none of them would make the workspace useless to that role, and
+        // the visibility rule already narrows what "them" means per person.
+        for (SystemRole role : SystemRole.values()) {
+            assertThat(role.permissionCodes())
+                    .as("permissions granted by %s", role)
+                    .contains(Permissions.PROJECT_READ);
+        }
+    }
+
+    @Test
     void everyRoleCanSeeTheTeamsOfItsWorkspace() {
         // Teams are the shape of the workspace. A role that could not see them
         // would be looking at an installation with a hole in the middle of it.

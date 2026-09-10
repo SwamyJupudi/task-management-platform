@@ -5,10 +5,10 @@ workflows, and reporting. Requirements live in
 [`docs/project-requirements.pdf`](docs/project-requirements.pdf), which is the
 source of truth for scope.
 
-**Current state: workspace and teams phase.** The shared infrastructure is in
-place, and so are accounts, authentication, role-based authorization scoped to a
-workspace, workspace settings and lifecycle, and teams. Projects and tasks do not
-exist yet. See [Project status](#project-status).
+**Current state: projects phase.** The shared infrastructure is in place, and so
+are accounts, authentication, role-based authorization scoped to a workspace,
+workspace settings and lifecycle, teams, and projects with their membership and
+lifecycle. Tasks do not exist yet. See [Project status](#project-status).
 
 ---
 
@@ -144,7 +144,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 1     | Foundation: shared infrastructure         | Done        |
 | 2     | Identity: users, roles, authentication    | Done        |
 | 3     | Workspaces and teams                      | Done        |
-| 4     | Projects                                  | Not started |
+| 4     | Projects                                  | Done        |
 | 5     | Tasks, subtasks, dependencies, views      | Not started |
 | 6     | Comments, attachments, activity and audit | Not started |
 | 7     | Notifications                             | Not started |
@@ -201,9 +201,25 @@ its teams and stood down as their lead in the same transaction. The database
 refuses the removal otherwise, so this is the step that makes it possible rather
 than tidying that could be deferred.
 
+### What the projects phase delivers
+
+- Projects with the fields the requirements name, scoped to one workspace, with a
+  short key unique within it.
+- The five-status lifecycle, with the legal transitions enforced and a rejected
+  one refused rather than silently applied.
+- Project membership, and a single owner who is always one of the members.
+- Tags, drawn from one workspace catalog shared with tasks when they arrive.
+- Filtering by status, priority, team, owner, tag and free text, with paging and
+  sorting restricted to an allowlist.
+- Visibility that follows the requirements: an employee sees the projects assigned
+  to them, an administrator sees all of them.
+
+Progress is stored and returned as zero. The rule that derives it from tasks
+arrives in phase five; nothing pretends to calculate it before then.
+
 ### What it deliberately does not deliver
 
-Projects, tasks, comments, attachments, notifications and reporting.
+Tasks, subtasks, comments, attachments, notifications and reporting.
 
 Team dashboards, workload and task statistics are listed under team management in
 the requirements and are not here. They need tasks to exist, so they arrive with

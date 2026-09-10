@@ -123,6 +123,10 @@ class Team {
         return status == TeamStatus.ARCHIVED;
     }
 
+    boolean isDeleted() {
+        return deletedAt != null;
+    }
+
     boolean isLedBy(UUID userId) {
         return leadUserId != null && leadUserId.equals(userId);
     }

@@ -97,6 +97,28 @@ either side of a migration have to be able to do the same things.
 `MemberRemovalCascadeIT` covers the other side of the schema rules above: the
 event-driven cleanup that lets a removal succeed at all.
 
+## The projects phase
+
+`ProjectVisibilityIT` is the one to keep honest, and the reason is worth stating.
+Read scope decides which rows a listing returns rather than whether a call is
+allowed, so a mistake in it leaks the shape of a workspace instead of failing
+loudly. It covers each of the three ways a project comes into reach separately,
+the case where none of them holds, and the case where a filter is used to try to
+widen the answer.
+
+`ProjectAuthorizationIT` covers the write half: a team lead admitted for a project
+they own or whose team they lead, and refused for one that is neither, holding
+exactly the same permission in all three cases.
+
+`ProjectSchemaIT` is written in SQL, like its identity and teams counterparts, and
+proves the composite keys, the folded partial uniques, the date order and the
+progress bound. `ProjectCascadeIT` proves the event-driven cleanup that lets a
+workspace member be removed at all, plus the team detachment that nothing refuses
+and so could silently be forgotten.
+
+`ProjectStatusTest` walks the whole transition matrix rather than a happy path,
+including that every status is reachable and that none is a dead end.
+
 ## Mail in tests
 
 There is no mail transport. `RecordingMailSender` captures messages so a test can

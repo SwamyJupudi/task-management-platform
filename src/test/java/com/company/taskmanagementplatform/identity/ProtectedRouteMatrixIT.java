@@ -89,7 +89,7 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void theWorkspaceAndTeamRoutesAreAmongTheOnesScanned() {
+    void theWorkspaceTeamAndProjectRoutesAreAmongTheOnesScanned() {
         // The matrix protects a route by walking over it, so a route it never sees
         // is a route it never protected. Naming a few of the newest ones keeps the
         // sweep from passing vacuously for a whole module.
@@ -108,7 +108,16 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
                         "POST /api/v1/workspaces/{workspaceId}/teams/{teamId}/members",
                         "DELETE /api/v1/workspaces/{workspaceId}/teams/{teamId}/members/{userId}",
                         "PUT /api/v1/workspaces/{workspaceId}/teams/{teamId}/lead",
-                        "DELETE /api/v1/workspaces/{workspaceId}/teams/{teamId}/lead");
+                        "DELETE /api/v1/workspaces/{workspaceId}/teams/{teamId}/lead",
+                        "POST /api/v1/workspaces/{workspaceId}/projects",
+                        "GET /api/v1/workspaces/{workspaceId}/projects",
+                        "PATCH /api/v1/workspaces/{workspaceId}/projects/{projectId}",
+                        "DELETE /api/v1/workspaces/{workspaceId}/projects/{projectId}",
+                        "POST /api/v1/workspaces/{workspaceId}/projects/{projectId}/status",
+                        "POST /api/v1/workspaces/{workspaceId}/projects/{projectId}/members",
+                        "DELETE /api/v1/workspaces/{workspaceId}/projects/{projectId}/members/{userId}",
+                        "PUT /api/v1/workspaces/{workspaceId}/projects/{projectId}/owner",
+                        "DELETE /api/v1/workspaces/{workspaceId}/projects/{projectId}/owner");
     }
 
     private boolean respondsToAnonymous(Route route) {

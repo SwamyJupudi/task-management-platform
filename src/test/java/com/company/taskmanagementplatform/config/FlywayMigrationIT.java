@@ -57,6 +57,10 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
     /** Added by {@code V4}, with the workspace settings and lifecycle columns. */
     private static final List<String> TEAM_TABLES = List.of("teams", "team_members");
 
+    /** Added by {@code V5}. The label catalog is shared with tasks when they arrive. */
+    private static final List<String> PROJECT_TABLES =
+            List.of("projects", "project_members", "labels", "project_labels");
+
     @Test
     void theMigrationsCreateExactlyTheTablesTheyShould() {
         List<String> tables = jdbc.queryForList(
@@ -66,7 +70,10 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
         // a project or task table appearing here would mean a later phase had been
         // merged early, or that Hibernate had created something behind Flyway's back.
         assertThat(tables).containsExactlyInAnyOrderElementsOf(Stream.of(
-                        Stream.of("flyway_schema_history"), IDENTITY_TABLES.stream(), TEAM_TABLES.stream())
+                        Stream.of("flyway_schema_history"),
+                        IDENTITY_TABLES.stream(),
+                        TEAM_TABLES.stream(),
+                        PROJECT_TABLES.stream())
                 .flatMap(stream -> stream)
                 .toList());
     }
@@ -78,6 +85,7 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
         List<String> tables = jdbc.queryForList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'", String.class);
 
-        assertThat(tables).doesNotContain("projects", "tasks", "task_comments", "attachments", "task_labels");
+        assertThat(tables).doesNotContain("tasks", "subtasks", "task_dependencies", "task_labels", "comments",
+                "comment_mentions", "attachments", "notifications", "activity_logs");
     }
 }

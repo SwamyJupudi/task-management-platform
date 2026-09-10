@@ -1,9 +1,13 @@
 package com.company.taskmanagementplatform.teams;
 
 import java.time.Clock;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -40,6 +44,7 @@ public class TeamService {
     private final TeamMemberRepository members;
     private final TeamMapper mapper;
     private final MembershipService workspaceMembers;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
     TeamService(
@@ -47,11 +52,13 @@ public class TeamService {
             TeamMemberRepository members,
             TeamMapper mapper,
             MembershipService workspaceMembers,
+            ApplicationEventPublisher events,
             Clock clock) {
         this.teams = teams;
         this.members = members;
         this.mapper = mapper;
         this.workspaceMembers = workspaceMembers;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -123,10 +130,58 @@ public class TeamService {
      * <p>The roster is left in place. The team row still exists, so the join rows are not orphans,
      * and keeping them is what makes restoring the row by hand a complete restore rather than a
      * partial one. Every read filters on {@code deleted_at}, so none of it is reachable meanwhile.
+     *
+     * <p>The event goes out first, so anything referring to the team can stand down inside this same
+     * transaction rather than being left pointing at a row nothing will return again.
      */
     @Transactional
     public void delete(UUID workspaceId, UUID teamId) {
-        requireTeam(workspaceId, teamId).softDelete(clock.instant());
+        Team team = requireTeam(workspaceId, teamId);
+        events.publishEvent(new TeamDeletedEvent(workspaceId, teamId));
+        team.softDelete(clock.instant());
+    }
+
+    /**
+     * Whether a live team with this identifier exists in this workspace.
+     *
+     * <p>For other modules that need to point at a team, which must not reach into this one's
+     * repository. It answers the narrow question only, and always by workspace as well as by
+     * identifier, so it can never confirm the existence of a team belonging somewhere else.
+     */
+    @Transactional(readOnly = true)
+    public boolean existsInWorkspace(UUID workspaceId, UUID teamId) {
+        return teamId != null
+                && teams.findByIdAndWorkspaceIdAndDeletedAtIsNull(teamId, workspaceId).isPresent();
+    }
+
+    /**
+     * The names of several teams at once, for another module rendering a list that names them.
+     *
+     * <p>Plural on purpose. The single-team version invites a lookup per row, which is how a list
+     * endpoint turns into N+1 without anybody noticing until it is in production.
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, String> teamNamesByIds(UUID workspaceId, Collection<UUID> teamIds) {
+        if (teamIds.isEmpty()) {
+            return Map.of();
+        }
+        return teams.findAllById(teamIds).stream()
+                .filter(team -> team.getWorkspaceId().equals(workspaceId))
+                .collect(Collectors.toMap(Team::getId, Team::getName));
+    }
+
+    /**
+     * The live teams this person leads in one workspace.
+     *
+     * <p>Read by the projects module, where leading a team is one of the three things that make a
+     * project visible to somebody without the workspace-wide read grant.
+     */
+    @Transactional(readOnly = true)
+    public List<UUID> teamIdsLedBy(UUID workspaceId, UUID userId) {
+        return teams.findAllByWorkspaceIdAndLeadUserId(workspaceId, userId).stream()
+                .filter(team -> !team.isDeleted())
+                .map(Team::getId)
+                .toList();
     }
 
     @Transactional(readOnly = true)

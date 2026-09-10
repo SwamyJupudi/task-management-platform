@@ -93,6 +93,33 @@ class OpenApiContractIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void documentsTheProjectEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}'].patch")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}'].delete")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/status'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/members'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/members'].post")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/members/{userId}'].delete")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/owner'].put")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/projects/{projectId}/owner'].delete")
+                        .exists());
+    }
+
+    @Test
     void keepsTheSharedErrorShapeInTheDocument() throws Exception {
         // The foundation's promise: one error body across every endpoint.
         mockMvc.perform(get("/v3/api-docs"))

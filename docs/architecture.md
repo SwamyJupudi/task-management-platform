@@ -199,6 +199,92 @@ Team dashboards, workload and task statistics are named under team management in
 the requirements and are not built here. They need tasks to exist, so they belong
 with the other analytics in phase eight.
 
+## Projects
+
+Reviewed and approved. Built in phase four.
+
+A project belongs to exactly one workspace, has at most one owner, and may belong
+to at most one team. Owner and team are both nullable for the same reason the
+team lead is: a project between owners is an ordinary state, and refusing to
+represent it would mean either inventing a placeholder or refusing to let an owner
+leave. Both are pinned to the workspace by the database rather than by a service
+check, in the same way as everything else in the schema. See `database.md`.
+
+There is deliberately **no project-level role**. The requirements describe none,
+and adding one would be a second authorization model beside the workspace roles,
+with its own resolution path that no test of the first one covers.
+
+### Lifecycle
+
+`PLANNING`, `ACTIVE`, `ON_HOLD`, `COMPLETED`, `ARCHIVED`. The requirements print
+these as a chain and state no transition rules; the matrix is ours and is
+approved:
+
+| From | May move to |
+| --- | --- |
+| PLANNING | ACTIVE, ARCHIVED |
+| ACTIVE | ON_HOLD, COMPLETED, ARCHIVED |
+| ON_HOLD | ACTIVE, ARCHIVED |
+| COMPLETED | ACTIVE, ARCHIVED |
+| ARCHIVED | PLANNING, ACTIVE, ON_HOLD, COMPLETED |
+
+Two properties are load-bearing. Nothing is a dead end, so archiving stays safe to
+use. And nothing skips the middle: a plan that was never worked on was abandoned
+rather than finished, and archiving says that honestly. A rejected move answers
+409, and so does a move to the status a project already holds, because a silent
+no-op would be indistinguishable from a real transition in the activity log.
+
+A project always opens in `PLANNING`. Letting the caller choose would make the
+transition rules optional, since any state could be reached by creating a project
+already in it. An archived project refuses edits and roster changes and stays
+readable, matching the team rule.
+
+### Authorization, and the read scope
+
+Projects are the first place the **read** half of the scope layer appears. The
+requirements say an employee views *assigned* projects, so reading is not a yes or
+no at the method boundary; it decides which rows come back, and it lives inside
+the query joined to the filters with AND, so no filter can widen it.
+
+Three things put a project in reach of somebody without `project:read_any`:
+owning it, being on it, and leading the team it belongs to. A project outside that
+reach answers **404, not 403**, which is the same reasoning the workspace guard
+uses one level up: a forbidden response would confirm the identifier names
+something real.
+
+Write scope works exactly as it does for teams. `project:update` and
+`project:manage_members` admit a caller for every project in the workspace;
+`project:manage_any` is what widens them from the projects they own or lead the
+team of to all of them. Creating and deleting a project belong to the
+administrator, who is the project manager the requirements describe, so a team
+lead cannot delete a project they run.
+
+Belonging to a team grants nothing over that team's projects by itself. Leading
+one does.
+
+### Tags
+
+One workspace-scoped `labels` catalog serves projects and tasks both. The
+requirements call them tags on a project and labels on a task, but they are the
+same thing used twice. Tagging get-or-creates a label by folded name; there is no
+label administration API in this phase, and the catalog screen belongs to the
+admin panel. A labels list on an edit replaces the whole set, because tags are a
+set rather than a sequence of additions.
+
+### Progress
+
+The requirements list Progress as a project field. The rule that derives it needs
+tasks, so the column exists, is written as zero, and is not maintained by this
+module. Phase five implements the derivation. Nothing pretends to calculate it in
+the meantime, which is the honest version of a field that cannot yet mean
+anything.
+
+### Sorting
+
+A listing sorts only by an allowlist of fields. Passing a client's sort straight
+through lets a query parameter probe the shape of the entity and order by columns
+with no index behind them, and neither failure is visible from the response.
+
 ## Identity and authentication
 
 Reviewed and approved. Built in phase two. Where the requirements document is
@@ -429,7 +515,7 @@ Starts alongside the identity phase.
 | 1     | Foundation. Shared infrastructure above. No domain tables, no features. |
 | 2     | Identity. User, Role, Permission, authentication, authorization guards, workspace membership and invitations, and the minimal workspace row they require. |
 | 3     | Workspace lifecycle and settings, and teams. **Done.**                  |
-| 4     | Projects and project membership.                                        |
+| 4     | Projects and project membership. **Done.**                              |
 | 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries.   |
 | 6     | Comments and mentions, attachments, activity and audit logging.         |
 | 7     | Notifications with read state, history, and the deadline scheduler.     |
@@ -451,5 +537,5 @@ above.
 | Storage provider           | **Unspecified** by the requirements. Kept provider-agnostic behind a port. Chosen before attachments. |
 | Task dependency semantics  | **Unspecified.** Modeled as a single blocking relationship.        |
 | Notification delivery      | **Unspecified.** Polling first, server-sent events as a later swap. |
-| Project progress rule      | **Proposed.** See `database.md`.                                    |
+| Project progress rule      | **Approved.** Column added in `V5`; derivation lands with tasks in phase five. |
 | Custom workspace roles     | Deferred. Schema supports them, none are seeded.                    |

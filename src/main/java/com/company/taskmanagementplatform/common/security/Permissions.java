@@ -54,6 +54,25 @@ public final class Permissions {
      */
     public static final String TEAM_MANAGE_ANY = "team:manage_any";
 
+    public static final String PROJECT_READ = "project:read";
+    public static final String PROJECT_CREATE = "project:create";
+    public static final String PROJECT_UPDATE = "project:update";
+    public static final String PROJECT_DELETE = "project:delete";
+    public static final String PROJECT_MANAGE_MEMBERS = "project:manage_members";
+
+    /**
+     * The read half of the scope layer for projects.
+     *
+     * <p>The requirements say an employee views <em>assigned</em> projects. Without this grant a
+     * listing returns only the projects the caller belongs to, owns, or whose team they lead; with it,
+     * every project in the workspace. It is applied in the query rather than at the method boundary,
+     * because it decides which rows come back rather than whether the call is allowed at all.
+     */
+    public static final String PROJECT_READ_ANY = "project:read_any";
+
+    /** The write half, widening {@link #PROJECT_UPDATE} and {@link #PROJECT_MANAGE_MEMBERS} to every project. */
+    public static final String PROJECT_MANAGE_ANY = "project:manage_any";
+
     /** The catalog as data, for the test that compares it against the seeded rows. */
     public static final Set<String> ALL = Set.of(
             USER_READ,
@@ -78,7 +97,14 @@ public final class Permissions {
             TEAM_UPDATE,
             TEAM_DELETE,
             TEAM_MANAGE_MEMBERS,
-            TEAM_MANAGE_ANY);
+            TEAM_MANAGE_ANY,
+            PROJECT_READ,
+            PROJECT_READ_ANY,
+            PROJECT_CREATE,
+            PROJECT_UPDATE,
+            PROJECT_DELETE,
+            PROJECT_MANAGE_MEMBERS,
+            PROJECT_MANAGE_ANY);
 
     private Permissions() {}
 }

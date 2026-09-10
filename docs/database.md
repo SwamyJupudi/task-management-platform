@@ -19,6 +19,7 @@ Applied so far:
 | `V2`    | Identity tables: `users`, `permissions`, `roles`, `role_permissions`, `workspaces`, `workspace_members`, `workspace_invitations`, `user_tokens`, `refresh_tokens` |
 | `V3`    | Seed data: the global permission catalog, the single `SUPER_ADMIN` platform role, and an explicit `role_permissions` row joining that role to every permission in the catalog. Workspace roles are seeded in code when a workspace is created, so they are not migration data |
 | `V4`    | Workspace settings and lifecycle columns, the `teams` and `team_members` tables, seven new permissions mapped to `SUPER_ADMIN`, and a backfill giving the new grants to workspace roles that already existed |
+| `V5`    | Projects: `projects`, `project_members`, and the shared `labels` catalog with `project_labels`. Seven project permissions, mapped and backfilled the same way |
 
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
@@ -117,6 +118,30 @@ published before the membership row is deleted. The dependency is enforced rathe
 than remembered, so a future module that hangs rows off a membership will be told
 at once rather than silently leaving orphans.
 
+**A project's people and its team are pinned the same way.** `projects` keys
+`(workspace_id, owner_user_id)` into `workspace_members` and `(team_id,
+workspace_id)` into `teams`, and `project_members` keys both its project and its
+user. So an owner from outside the workspace, a team from another workspace, and
+a project member who does not belong are all writes PostgreSQL refuses.
+
+The consequence is the same one teams already carry: **removing somebody from a
+workspace is refused while they own or belong to one of its projects**, and the
+`projects` module clears that state first on the event published before the
+membership row is deleted. A deleted team is the one case nothing refuses, since
+a soft delete leaves the row in place, which is exactly why projects are detached
+from it deliberately rather than left pointing at a row every read filters out.
+
+**Owner and team are nullable, and that is deliberate.** A project between owners
+is an ordinary state. `NOT NULL` would mean an owner could never leave the
+workspace, and would force the cleanup to invent a replacement rather than clear
+the column and let somebody decide.
+
+**Project progress is stored and not yet maintained.** The requirements list it as
+a project field and the rule that derives it needs tasks, which arrive in phase
+five. The column exists with a check constraint bounding it to 0-100, is written
+as zero on creation, and nothing in the projects module updates it. See the
+proposed rule at the end of this document.
+
 **The workspace default role is keyed the same way.** `default_role_id` references
 `roles (id, workspace_id)`, so one workspace cannot be pointed at another's role,
 and a platform role has a null workspace and cannot be named at all.
@@ -157,8 +182,8 @@ The scheduled purge is hardening-phase work.
 
 | Table               | Notes                                                                |
 | ------------------- | -------------------------------------------------------------------- |
-| `projects`          | Status `PLANNING/ACTIVE/ON_HOLD/COMPLETED/ARCHIVED`, priority `LOW/MEDIUM/HIGH/CRITICAL`, unique `key` per workspace |
-| `project_members`   | Join                                                                  |
+| `projects`          | Status `PLANNING/ACTIVE/ON_HOLD/COMPLETED/ARCHIVED`, priority `LOW/MEDIUM/HIGH/CRITICAL`, unique `key` and unique name per workspace, both folded and partial. `owner_user_id` and `team_id` nullable and both keyed to the workspace. Soft deleted |
+| `project_members`   | Join. Unique on `(project_id, user_id)`. Carries `workspace_id`, so both of its rules are foreign keys. No project-level role |
 | `labels`            | One workspace-scoped catalog, shared by projects and tasks. The requirements say tags on projects and labels on tasks; two near-identical tables would earn nothing |
 | `project_labels`    | Join                                                                  |
 | `task_labels`       | Join                                                                  |
@@ -192,12 +217,18 @@ Created with the tables that need them, not retrofitted.
 | `teams (workspace_id)`                   | The team list of a workspace    |
 | `team_members (team_id)`                 | One team's roster               |
 | `team_members (user_id)`                 | Cleanup when somebody leaves    |
+| `projects (workspace_id, status)`        | The project list of a workspace |
+| `projects (owner_user_id)`               | Filter by owner, and cleanup    |
+| `projects (team_id)`                     | Filter by team, and detaching   |
+| `project_members (project_id)`           | One project's roster            |
+| `project_members (user_id)`              | Visibility, and cleanup         |
 
 All partial on non-deleted rows where the table is soft-deletable.
 
 ## Proposed business rule: project progress
 
-**Not implemented. Awaiting approval.**
+**Approved. The column exists as of `V5` and is not yet maintained; the
+derivation arrives in phase five with tasks.**
 
 The requirements list Progress as a project field but do not say who sets it.
 Letting a person type it guarantees it will be wrong, so the proposal is to

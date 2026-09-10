@@ -38,7 +38,14 @@ enum SystemRole {
                     Permissions.TEAM_UPDATE,
                     Permissions.TEAM_DELETE,
                     Permissions.TEAM_MANAGE_MEMBERS,
-                    Permissions.TEAM_MANAGE_ANY)),
+                    Permissions.TEAM_MANAGE_ANY,
+                    Permissions.PROJECT_READ,
+                    Permissions.PROJECT_READ_ANY,
+                    Permissions.PROJECT_CREATE,
+                    Permissions.PROJECT_UPDATE,
+                    Permissions.PROJECT_DELETE,
+                    Permissions.PROJECT_MANAGE_MEMBERS,
+                    Permissions.PROJECT_MANAGE_ANY)),
 
     /**
      * Leads people inside a workspace. May see the roster, not change it.
@@ -46,6 +53,12 @@ enum SystemRole {
      * <p>Holds the two team-management codes but not {@code team:manage_any}, which is what narrows
      * them to the teams this person actually leads. Creating and removing a team stay with the
      * administrator.
+     *
+     * <p>Projects follow the same shape and for the same reason. They may edit a project and manage
+     * its members, but hold neither {@code project:manage_any}, which would widen that to every
+     * project, nor {@code project:read_any}, which would show them projects they have nothing to do
+     * with. Creating and removing a project stay with the administrator, who is the project manager
+     * the requirements describe.
      */
     TEAM_LEAD(
             "Team Lead",
@@ -55,12 +68,19 @@ enum SystemRole {
                     Permissions.ROLE_READ,
                     Permissions.TEAM_READ,
                     Permissions.TEAM_UPDATE,
-                    Permissions.TEAM_MANAGE_MEMBERS)),
+                    Permissions.TEAM_MANAGE_MEMBERS,
+                    Permissions.PROJECT_READ,
+                    Permissions.PROJECT_UPDATE,
+                    Permissions.PROJECT_MANAGE_MEMBERS)),
 
     /** Works in the workspace. Sees who else is in it, and nothing administrative. */
     EMPLOYEE(
             "Employee",
-            Set.of(Permissions.WORKSPACE_READ, Permissions.MEMBER_READ, Permissions.TEAM_READ));
+            Set.of(
+                    Permissions.WORKSPACE_READ,
+                    Permissions.MEMBER_READ,
+                    Permissions.TEAM_READ,
+                    Permissions.PROJECT_READ));
 
     static final String SUPER_ADMIN_SLUG = "SUPER_ADMIN";
 
