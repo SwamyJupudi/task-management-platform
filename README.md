@@ -5,10 +5,11 @@ workflows, and reporting. Requirements live in
 [`docs/project-requirements.pdf`](docs/project-requirements.pdf), which is the
 source of truth for scope.
 
-**Current state: projects phase.** The shared infrastructure is in place, and so
-are accounts, authentication, role-based authorization scoped to a workspace,
-workspace settings and lifecycle, teams, and projects with their membership and
-lifecycle. Tasks do not exist yet. See [Project status](#project-status).
+**Current state: collaboration phase.** The shared infrastructure is in place, and
+so are accounts, authentication, role-based authorization scoped to a workspace,
+workspace settings and lifecycle, teams, projects, tasks with their subtasks and
+dependencies, and now comments, mentions, attachments and the audit trail.
+Notifications do not exist yet. See [Project status](#project-status).
 
 ---
 
@@ -65,6 +66,12 @@ There is no mail transport yet. In the `dev` profile the verification and reset
 links are written to the application log instead, so you can complete either flow
 locally by copying the link out of the console. That logging is off everywhere
 else, because tokens do not belong in logs.
+
+Uploaded files go to `./var/attachments` in development, which is git-ignored and
+safe to delete. No object-storage provider has been chosen, so the application
+refuses to start under the `prod` profile rather than writing customer files to the
+application server, which the requirements forbid. Set `STORAGE_LOCAL_DIR` to put
+them somewhere else.
 
 To stop the database and keep its data, run `docker compose stop`. To remove the
 data as well, run `docker compose down -v`.
@@ -146,7 +153,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 3     | Workspaces and teams                      | Done        |
 | 4     | Projects                                  | Done        |
 | 5     | Tasks, subtasks, dependencies, views      | Done        |
-| 6     | Comments, attachments, activity and audit | Not started |
+| 6     | Comments, mentions, attachments, activity | Done        |
 | 7     | Notifications                             | Not started |
 | 8     | Dashboards and reports                    | Not started |
 | 9     | Admin panel                               | Not started |
@@ -240,9 +247,42 @@ Assignment, status changes and deletion each need their own permission, so a tea
 lead assigns and tracks work without being able to delete it, and an employee runs
 their own tasks without being able to hand them to somebody else.
 
+### What the collaboration phase delivers
+
+- Comments on a task, with the author and the moment recorded, and an edit stamp
+  separate from the row's own timestamp so a reader knows when the words changed.
+- Mentions, written into the text as `@[user:<uuid>]` and read back out by the
+  server, so the notifications a comment produces can never disagree with what it
+  says. Naming somebody who cannot see the task is refused rather than silently
+  dropped.
+- Attachments on a task or on a comment, with the type detected from the file's own
+  bytes rather than from what the upload claimed, an allowlist that excludes SVG
+  because browsers execute it, and downloads that always leave as attachments.
+- An audit trail of what people did, written from events the earlier phases were
+  already publishing, and append only: a database trigger refuses to change or
+  remove a row that has been written.
+
+Anybody who can see a task may comment on it and attach to it. That is deliberate
+and is not the rule that governs editing a task: a discussion only the assignee may
+join is not a discussion. Removing somebody's comment is possible for an
+administrator, or for the owner or team lead of the project it sits in. **Rewriting
+it is possible for nobody but its author,** whatever else they hold.
+
+Nobody has to be stood down when they leave a workspace for any of this. A comment,
+a file and an audit row all key to the person rather than to their membership, so
+they outlive somebody changing team, which is what anybody reading an old thread
+would expect.
+
+There is no storage provider yet. Files are written to local disk in development and
+in tests, behind a port, and the application **refuses to start in production** with
+that arrangement rather than quietly putting customer files on a disk the next
+deployment discards. Choosing the provider is the one thing between this and a
+deployable build.
+
 ### What it deliberately does not deliver
 
-Comments, attachments, notifications and reporting.
+Notifications and reporting. Comments and mentions produce the events a
+notification would be sent from, and nothing sends one yet.
 
 Team dashboards, workload and task statistics are listed under team management in
 the requirements and are not here. They arrive with the other analytics in phase
@@ -256,3 +296,8 @@ search index belong with the hardening work.
 There is no mail transport, no rate limiting beyond per-account lockout, and no
 cleanup of expired token rows. Each is scheduled work rather than an oversight:
 see the identity section of [`docs/architecture.md`](docs/architecture.md).
+
+Uploaded files are not scanned for malware, and removing one leaves its bytes in
+storage for a purge that does not exist yet. Both sit with the rest of the upload
+security work in the hardening phase, and both are recorded under *Still open* in
+[`docs/architecture.md`](docs/architecture.md) rather than left to be discovered.

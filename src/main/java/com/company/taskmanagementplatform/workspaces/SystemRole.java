@@ -52,7 +52,15 @@ enum SystemRole {
                     Permissions.TASK_ASSIGN,
                     Permissions.TASK_CHANGE_STATUS,
                     Permissions.TASK_DELETE,
-                    Permissions.TASK_MANAGE_ANY)),
+                    Permissions.TASK_MANAGE_ANY,
+                    Permissions.COMMENT_CREATE,
+                    Permissions.COMMENT_UPDATE,
+                    Permissions.COMMENT_DELETE,
+                    Permissions.COMMENT_MANAGE_ANY,
+                    Permissions.ATTACHMENT_CREATE,
+                    Permissions.ATTACHMENT_DELETE,
+                    Permissions.ATTACHMENT_MANAGE_ANY,
+                    Permissions.ACTIVITY_READ)),
 
     /**
      * Leads people inside a workspace. May see the roster, not change it.
@@ -72,6 +80,12 @@ enum SystemRole {
      * which narrows all of them to the tasks in the projects they own or lead the team of. They do
      * not hold {@code task:delete}: removing work is the administrator's, the same way removing a
      * project is, and a lead who wants a task gone can say so.
+     *
+     * <p>Comments and attachments follow it a fourth time, and this is the one place the shape is
+     * worth reading twice. A lead gets the same five codes an employee gets and neither {@code
+     * manage_any}, because the write scope already reaches every comment and file on the projects
+     * they own or lead the team of. That is the moderation a lead actually needs, and it stops at
+     * the edge of their own projects rather than at the edge of the workspace.
      */
     TEAM_LEAD(
             "Team Lead",
@@ -89,7 +103,12 @@ enum SystemRole {
                     Permissions.TASK_CREATE,
                     Permissions.TASK_UPDATE,
                     Permissions.TASK_ASSIGN,
-                    Permissions.TASK_CHANGE_STATUS)),
+                    Permissions.TASK_CHANGE_STATUS,
+                    Permissions.COMMENT_CREATE,
+                    Permissions.COMMENT_UPDATE,
+                    Permissions.COMMENT_DELETE,
+                    Permissions.ATTACHMENT_CREATE,
+                    Permissions.ATTACHMENT_DELETE)),
 
     /**
      * Works in the workspace. Sees who else is in it, and nothing administrative.
@@ -98,6 +117,11 @@ enum SystemRole {
      * status, so those three codes are here and {@code task:assign} is not. Without {@code
      * task:manage_any} the write scope narrows them to the tasks they are assigned or raised
      * themselves, which is what "permitted" means in practice.
+     *
+     * <p>The requirements also say plainly that an employee comments and uploads attachments, so the
+     * five ordinary collaboration codes are here. Neither {@code manage_any} is, which narrows both
+     * deletions to their own words and their own files. Editing is author-only for everybody, so
+     * {@code comment:update} grants no more here than it does to an administrator.
      */
     EMPLOYEE(
             "Employee",
@@ -109,7 +133,12 @@ enum SystemRole {
                     Permissions.TASK_READ,
                     Permissions.TASK_CREATE,
                     Permissions.TASK_UPDATE,
-                    Permissions.TASK_CHANGE_STATUS));
+                    Permissions.TASK_CHANGE_STATUS,
+                    Permissions.COMMENT_CREATE,
+                    Permissions.COMMENT_UPDATE,
+                    Permissions.COMMENT_DELETE,
+                    Permissions.ATTACHMENT_CREATE,
+                    Permissions.ATTACHMENT_DELETE));
 
     static final String SUPER_ADMIN_SLUG = "SUPER_ADMIN";
 

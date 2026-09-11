@@ -21,6 +21,7 @@ Applied so far:
 | `V4`    | Workspace settings and lifecycle columns, the `teams` and `team_members` tables, seven new permissions mapped to `SUPER_ADMIN`, and a backfill giving the new grants to workspace roles that already existed |
 | `V5`    | Projects: `projects`, `project_members`, and the shared `labels` catalog with `project_labels`. Seven project permissions, mapped and backfilled the same way |
 | `V6`    | Tasks: `tasks`, `project_task_counters`, `subtasks`, `task_labels` and `task_dependencies`. Seven task permissions, mapped and backfilled the same way |
+| `V7`    | Collaboration and audit: `comments`, `comment_mentions`, `attachments` and `activity_logs`, plus the trigger that makes the audit table append only. Eight permissions, mapped and backfilled the same way |
 
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
@@ -238,11 +239,38 @@ The scheduled purge is hardening-phase work.
 
 | Table              | Notes                                                                 |
 | ------------------ | --------------------------------------------------------------------- |
-| `comments`         | Task-scoped                                                            |
-| `comment_mentions` | Join, drives mention notifications                                     |
-| `attachments`      | Records `storage_provider` and `storage_key`, so changing provider is a data migration rather than a schema one. The file itself never lives on the application server |
+| `comments`         | Task-scoped and flat: no parent column, because the requirements describe no replies. `edited_at` beside `updated_at`, since a reader deserves to know when the words changed and `updated_at` moves for other reasons. Soft deleted |
+| `comment_mentions` | Join, drives mention notifications. The pair is the primary key, so naming somebody twice in one comment is one mention. Rows are derived from the body by the server and rewritten whenever it changes |
+| `attachments`      | Records `storage_provider` and `storage_key`, so changing provider is a data migration rather than a schema one. The file itself never lives on the application server. `content_type` is what the application detected from the leading bytes; what the client claimed is not stored. Soft deleted |
 | `notifications`    | Recipient, type, entity reference, `read_at`. Not soft deleted         |
-| `activity_logs`    | **Append only.** No update timestamp, no soft delete. Update and delete privileges are withheld from the application database role, which is how the requirement that audit records not be casually editable is enforced |
+| `activity_logs`    | **Append only.** No update timestamp, no soft delete. A trigger refuses every `UPDATE` and `DELETE`, which is how `V7` enforces the requirement that audit records not be casually editable under the single database role the application currently uses. Withholding the privileges from a separate application role completes it, and is delivery-phase work |
+
+**The people columns here key to `users`, and that is the opposite of everywhere
+else.** A comment's author, an attachment's uploader, a mention's subject and an
+audit row's actor all reference `users` rather than a membership table. A comment
+has to outlive its author leaving the workspace, and an audit row whose actor could
+vanish would not be an audit row. Because `users` rows are only ever soft-deleted,
+the key holds forever, and **these are the first tables in the schema that need no
+cleanup when somebody leaves a workspace**.
+
+**A comment attachment cannot point at a comment on another task.** `attachments`
+keys `(comment_id, task_id)` into `comments (id, task_id)`, which is why `comments`
+carries the redundant `UNIQUE (id, task_id)` that `roles`, `teams`, `projects` and
+`tasks` each carry for the same reason. Both columns are present rather than a
+polymorphic `owner_type`/`owner_id` pair, because a polymorphic key cannot be a
+foreign key at all.
+
+**The unique on `attachments.storage_key` is deliberately not partial.** Every other
+unique in this schema excludes deleted rows so a name becomes free again; this one
+must not, because a soft-deleted attachment still owns its stored object until the
+purge reclaims it, and handing the same key to a second file would overwrite bytes
+somebody may yet restore.
+
+**`activity_logs.metadata` is `jsonb` rather than a column per action.** Every action
+carries different facts, and a table with a column for each would be mostly nulls and
+would need a migration for every new kind of event. No prose is stored: the sentence
+a reader sees is composed when the row is read, so renaming somebody does not leave a
+stale sentence in the audit trail.
 
 ## Planned indexes
 
@@ -261,6 +289,12 @@ Created with the tables that need them, not retrofitted.
 | `notifications (recipient_user_id, read_at)` | Unread badge and history    |
 | `activity_logs (workspace_id, created_at desc)` | Audit browsing           |
 | `activity_logs (entity_type, entity_id)` | History for one record          |
+| `activity_logs (project_id, created_at desc)` | One project's history, and the narrowing a task's history runs inside |
+| `comments (task_id, created_at)`         | One task's thread              |
+| `comments (author_user_id)`              | Comment activity by person     |
+| `comment_mentions (mentioned_user_id)`   | Who to notify about a mention  |
+| `attachments (task_id)`                  | One task's files               |
+| `attachments (comment_id)`               | One comment's files            |
 | `teams (workspace_id)`                   | The team list of a workspace    |
 | `team_members (team_id)`                 | One team's roster               |
 | `team_members (user_id)`                 | Cleanup when somebody leaves    |
@@ -270,8 +304,15 @@ Created with the tables that need them, not retrofitted.
 | `project_members (project_id)`           | One project's roster            |
 | `project_members (user_id)`              | Visibility, and cleanup         |
 
-All partial on non-deleted rows where the table is soft-deletable, except the
-unique on `tasks (project_id, task_number)`, for the reason given above.
+All partial on non-deleted rows where the table is soft-deletable, except the unique
+on `tasks (project_id, task_number)` and the unique on `attachments.storage_key`,
+each for the reason given above.
+
+There is deliberately **no index on `activity_logs.metadata`**. A task's history
+finds its comments and files through the task identifier in their metadata, and that
+lookup runs inside `project_id`, which is indexed, so it reads one project's rows
+rather than a workspace's. An expression index belongs with the query tuning in the
+phase that has the volume to justify it.
 
 Full text over task title and description is **not** created yet. Phase five folds
 the search term and matches the title and the rendered `PROJ-12` form, narrowed

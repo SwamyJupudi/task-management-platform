@@ -445,6 +445,195 @@ them live and filtering at read time is worse than it sounds: an administrator's
 listing narrows on nothing, so a removed project's work would keep appearing in
 their board and calendar with no project to click through to.
 
+## Comments, attachments and activity
+
+Reviewed and approved. Built in phase six.
+
+Three modules, one migration, and one rule running through all of them that is the
+opposite of the rule every phase before it followed.
+
+### People columns key to `users`, not to a membership
+
+A task keys its assignee to `project_members` and its reporter to
+`workspace_members`, so removing somebody is refused until the tasks module stands
+them down. The people columns in this phase key to `users` instead: a comment's
+author, an attachment's uploader, a mention's subject, an audit row's actor.
+
+**A comment has to outlive its author leaving the workspace.** Deleting the words
+somebody wrote because they changed team would destroy the discussion the
+requirements ask us to keep, and an audit row whose actor could vanish would not be
+an audit row. Because `users` rows are only ever soft-deleted, the key holds
+forever. The consequence is worth stating plainly: **this is the first phase whose
+modules need no cleanup listener on a membership change at all**, and that is the
+schema's doing rather than a choice a service makes.
+
+### Comments
+
+Flat and task-scoped. The requirements list add, edit, delete, mentions and comment
+activity and describe no replies, so there is no parent column; a thread would bring
+ordering and depth rules nothing asked for.
+
+**Editing is author-only, always, including for a holder of `comment:manage_any`.**
+An administrator may remove somebody's words; nobody may rewrite them and leave them
+attributed to the person who wrote them. That asymmetry is the point of the grant:
+it widens deletion and nothing else.
+
+Deletion widens the ordinary way. Without `comment:manage_any` a caller may remove a
+comment they wrote, or one on a task in a project they own or lead the team of,
+which is the phase-five write scope one level down and is what lets a lead moderate
+the projects they run without reaching the whole workspace.
+
+A body is text and never HTML. Escaping belongs to whatever renders it, and storing
+markup would make that table the place an injected script lives.
+
+### Mentions
+
+The canonical form in a body is `@[user:<uuid>]`, and **the server parses it. The
+client does not send a list.** A supplied list is a second statement of the same
+fact, and the two disagree the moment somebody edits the text and not the list,
+which produces either a notification for a name no longer in the comment or silence
+for one that is. No display name is stored in the body either, so a rename does not
+leave stale text in somebody's words.
+
+**A mention of anybody who cannot already see the task is refused**, with 400 and a
+message naming them, rather than accepted and dropped. Accepting it would tell the
+writer their message was delivered when no notification will ever be sent, and a
+silent drop is the kind of failure nobody reports. Reachability is the existing rule
+and not a new one: a member of the task's project, its owner, the lead of its team,
+or somebody holding `project:read_any`.
+
+An edit rewrites the set wholesale rather than computing a difference, because the
+body is the record and the rows are derived from it. Only the people an edit *newly*
+names are announced, so fixing a typo does not notify everybody a second time.
+
+### Attachments and the storage port
+
+The requirements say files must be held in cloud or object storage and not on the
+application server in production. **No provider has been chosen**, and choosing one
+here would have meant an unreviewed decision and a new SDK dependency arriving with
+a feature. So this phase ships `FileStore`, a port in the shape `MailSender` already
+established, and one implementation that writes to local disk for development and
+tests.
+
+`StorageConfig` **fails at startup** rather than falling back: local storage under
+the `prod` profile is refused, and so is a provider that has no implementation. A
+fallback would work, would pass every test, and would quietly put customer files on
+an ephemeral disk that the next deployment discards.
+
+`presignedUrl` is what keeps the eventual swap a substitution. A store that can
+issue a signed URL gets one and the download endpoint redirects; one that cannot
+answers empty and the endpoint streams. The client sees one address either way. The
+local store cannot, so the streaming path is the one under test rather than the
+theoretical one.
+
+Uploads are validated in four steps, none of which consults anything the client said
+except to phrase an error: size, then the content type **detected from the leading
+bytes**, then that type against an allowlist, then the filename. The storage key is
+`workspace/<id>/task/<id>/<uuid>` and contains nothing a user supplied, so a hostile
+name cannot influence where bytes land; the name is stored in a column, where it is
+data rather than an instruction.
+
+**SVG is deliberately off the allowlist**, along with HTML and XML, all three caught
+by one rule: anything beginning with a markup delimiter. An SVG is a script-carrying
+document that browsers execute. Downloads are also served as attachments with
+`nosniff`, so that rule is the second lock rather than the only one. Office
+documents are recognised by looking inside the archive for the entry each format
+carries, which the JDK's own zip reader does at no cost in dependencies. A CSV is
+stored as text, because a CSV and a text file are indistinguishable from their bytes.
+
+A file belongs to a task and optionally to a comment. Both are columns rather than a
+polymorphic owner pair, because a polymorphic key cannot be a foreign key and would
+move referential integrity into the service layer. Files are uploaded to the task
+first and claimed by a comment when it is written, which keeps the upload a plain
+multipart request with no JSON part beside it; adoption refuses anything the caller
+did not upload, anything on another task, and anything already claimed.
+
+**Soft deleting an attachment does not delete the bytes.** Restoring is what soft
+deletion is for, and a restore that brought back a row pointing at nothing would be
+no restore. The purge that reclaims storage is hardening-phase work, beside the
+expired-token purge, and until it exists the store grows. Virus scanning is deferred
+to the same phase, where the requirements' own file-upload-security item sits.
+
+### Activity and audit
+
+`activity_logs` is **append only**. No update timestamp, no soft delete, no service
+method that writes an existing row, and a `BEFORE UPDATE OR DELETE` trigger that
+refuses both from any connection.
+
+`database.md` records the eventual enforcement as privileges withheld from the
+application role. The application currently runs its migrations under the role it
+serves requests with, so a `REVOKE` today would break Flyway on the next deployment.
+The trigger is the half that works under one role and is testable; the **separate
+migration role and the `REVOKE` are delivery-phase work**, and both together are the
+requirement.
+
+**No prose is stored.** The requirements print "Srikanth assigned Task #123 to
+Rahul" as an example of what must be recorded, not of what must be stored. A stored
+sentence is a copy of the user table that goes stale the day somebody is renamed, so
+the row carries structured metadata in `jsonb` and the sentence is composed when
+somebody reads it, from the name that person holds then.
+
+Rows are written **after commit, in a new transaction**, from the events phases
+three, four and five have been publishing to nobody. Not one of those modules was
+edited to be recorded here, which is what the event design in *Cross-module effects*
+was for. The trade is real and accepted: an audit write that fails after its
+transaction committed loses that record and leaves an ERROR line carrying the
+correlation id. Writing inside the caller's transaction would instead make an audit
+failure roll back somebody's work, which is the wrong way round for a log that is
+not a legal record.
+
+**The write happens on the activity module's own single thread, and that is a
+correctness fix rather than a performance one.** A committed transaction has not
+released its database connection by the time an after-commit listener runs, so
+writing there holds a second one; with more concurrent writers than half the pool,
+every one of them holds a connection while waiting for another and the pool
+deadlocks until Hikari times out. This was not theoretical. It appeared the moment
+this module started listening, as `TaskNumberingConcurrencyIT` — a phase-five test
+that creates twelve tasks at once against a pool of ten — began timing out, and it
+would have been a production outage under load rather than a slow test.
+
+Handing the row to a bounded, single-threaded executor breaks the cycle: the request
+returns its connection, and the write happens a moment later competing with nobody.
+One thread keeps the queue FIFO, so rows are written in the order the events
+happened, and the moment and the correlation id are read on the request's thread and
+carried across rather than sampled on the writing one. The cost is that a row queued
+when the process dies is lost, which widens the loss window the design already
+accepted rather than opening a new kind of hole.
+
+Two things are deliberately not recorded. Derived project progress, because an audit
+trail is a record of what people did and progress is a consequence nobody performed.
+And a subtask completion beside the status change that caused it, because they are
+one fact and two rows would make a history read like a stutter.
+
+Browsing a whole workspace needs `activity:read`, which only an administrator holds,
+because that is administration. One record's history needs nothing beyond being able
+to see that record, or the people working on a project could not see its own past. A
+task's history includes what happened to its subtasks, comments and files, found
+through the task identifier their metadata carries; the requirements print "Anil
+added a comment" as an example of exactly what belongs there. That lookup is not
+indexed and runs inside `project_id`, which is: an expression index belongs with the
+other query tuning in the phase that has the volume to justify it.
+
+### Module boundaries
+
+`comments` calls one public facade on `attachments` to claim files, because that has
+to validate and to fail the request when it cannot. `attachments` hears
+`CommentDeleted` and takes a comment's files with it, because nothing needs an
+answer. The dependency runs both ways and in two different forms, and each form
+suits what it carries.
+
+`activity` imports nothing from anywhere but event records. `TaskAccessGuard` gained
+one method, `requireContribution`, which both new modules use: **contributing is not
+the same as changing.** Anybody who can see a task may comment on it and attach to
+it, so the write scope that narrows editing a task to its assignee and reporter is
+deliberately absent there. A discussion only the assignee may join is not one.
+
+Comments and files are addressed flat, by their own identifier, so which task they
+belong to is not known until they have been loaded. Their edit and delete paths
+therefore authorize inside the service rather than in the controller, which is the
+one place this phase departs from the platform convention; the alternative is a
+lookup, a guard, and then the same lookup again.
+
 ## Identity and authentication
 
 Reviewed and approved. Built in phase two. Where the requirements document is
@@ -677,7 +866,7 @@ Starts alongside the identity phase.
 | 3     | Workspace lifecycle and settings, and teams. **Done.**                  |
 | 4     | Projects and project membership. **Done.**                              |
 | 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries. **Done.** |
-| 6     | Comments and mentions, attachments, activity and audit logging.         |
+| 6     | Comments and mentions, attachments, activity and audit logging. **Done.** |
 | 7     | Notifications with read state, history, and the deadline scheduler.     |
 | 8     | Dashboards, reports, analytics, and the indexes they need.              |
 | 9     | Admin panel.                                                            |
@@ -694,10 +883,13 @@ above.
 
 | Item                       | State                                                              |
 | -------------------------- | ------------------------------------------------------------------ |
-| Storage provider           | **Unspecified** by the requirements. Kept provider-agnostic behind a port. Chosen before attachments. |
+| Storage provider           | **Still unspecified**, and now the one thing standing between this platform and a production deployment. Phase six built `FileStore` and a local implementation; `StorageConfig` refuses to start under `prod` until a real one is wired. Choosing it needs a decision and an SDK dependency, both of which belong in a review rather than in a feature phase |
 | Task dependency semantics  | **Settled.** A single blocking relationship, confined to one project, with no type column. Built in phase five. |
 | Notification delivery      | **Unspecified.** Polling first, server-sent events as a later swap. |
 | Project progress rule      | **Implemented** in phase five, with `DONE` winning over an unfinished checklist. |
+| Attachment byte purge      | **Deferred** to hardening. A soft-deleted file keeps its stored object, so the store grows until the purge exists. |
+| Audit role separation      | **Deferred** to delivery. A trigger refuses edits to `activity_logs` today; the separate migration role and the `REVOKE` complete it. |
+| Virus scanning             | **Deferred** to hardening, with the rest of upload security. |
 | Blocked tasks              | **Surfaced, not enforced.** The requirements state no rule about starting or finishing blocked work. Revisit only with evidence. |
 | Task full-text search      | Deferred to hardening. `q` folds and matches the title and the rendered key; the trigram or GIN index belongs with the other query tuning. |
 | Kanban reordering          | Deferred. `board_position` exists, sorts, and is settable; gapless drag ordering is its own design. |

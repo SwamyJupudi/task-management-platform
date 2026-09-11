@@ -181,4 +181,38 @@ class OpenApiContractIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/auth/refresh'].post.parameters").doesNotExist());
     }
+
+    @Test
+    void documentsTheCollaborationEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/comments'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/comments'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/comments/{commentId}'].patch")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/comments/{commentId}'].delete")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments'].post")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/attachments/{attachmentId}/content'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/activity'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/tasks/{taskId}/activity'].get")
+                        .exists());
+    }
+
+    @Test
+    void documentsNoWayToWriteAnAuditEntry() throws Exception {
+        // The trail is written from events and from nowhere else. A mapped write
+        // endpoint would be a second way in, and the requirements say audit records
+        // must not be casually editable. Asserted against the document because that
+        // is what somebody generates a client from.
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/activity'].post").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/activity'].patch").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/activity'].delete").doesNotExist());
+    }
 }

@@ -36,3 +36,7 @@ build/
 .env
 .env.local
 !.env.example
+
+# Attachments written by the local file store in development. Never committed:
+# these are uploads, not source, and production keeps them in object storage.
+/var/

@@ -219,6 +219,64 @@ class WorkspaceRoleGrantsIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void anAdministratorModeratesCollaborationAndReadsTheAuditTrail() {
+        UUID workspaceId = freshWorkspace();
+
+        assertThat(grantedTo(workspaceId, "ADMIN"))
+                .contains(
+                        Permissions.COMMENT_CREATE,
+                        Permissions.COMMENT_UPDATE,
+                        Permissions.COMMENT_DELETE,
+                        Permissions.COMMENT_MANAGE_ANY,
+                        Permissions.ATTACHMENT_CREATE,
+                        Permissions.ATTACHMENT_DELETE,
+                        Permissions.ATTACHMENT_MANAGE_ANY,
+                        Permissions.ACTIVITY_READ);
+    }
+
+    @Test
+    void aTeamLeadCommentsAndUploadsButModeratesOnlyThroughTheWriteScope() {
+        // They hold the five ordinary codes and neither manage_any grant. What lets
+        // them remove somebody else's comment on a project they lead is the write
+        // scope, not a permission, which is why nothing wider appears here.
+        UUID workspaceId = freshWorkspace();
+        List<String> granted = grantedTo(workspaceId, "TEAM_LEAD");
+
+        assertThat(granted)
+                .contains(
+                        Permissions.COMMENT_CREATE,
+                        Permissions.COMMENT_UPDATE,
+                        Permissions.COMMENT_DELETE,
+                        Permissions.ATTACHMENT_CREATE,
+                        Permissions.ATTACHMENT_DELETE);
+        assertThat(granted)
+                .doesNotContain(
+                        Permissions.COMMENT_MANAGE_ANY,
+                        Permissions.ATTACHMENT_MANAGE_ANY,
+                        Permissions.ACTIVITY_READ);
+    }
+
+    @Test
+    void anEmployeeCommentsAndUploadsAndNothingMore() {
+        // The requirements give an employee "comment, upload attachments" plainly.
+        UUID workspaceId = freshWorkspace();
+        List<String> granted = grantedTo(workspaceId, "EMPLOYEE");
+
+        assertThat(granted)
+                .contains(
+                        Permissions.COMMENT_CREATE,
+                        Permissions.COMMENT_UPDATE,
+                        Permissions.COMMENT_DELETE,
+                        Permissions.ATTACHMENT_CREATE,
+                        Permissions.ATTACHMENT_DELETE);
+        assertThat(granted)
+                .doesNotContain(
+                        Permissions.COMMENT_MANAGE_ANY,
+                        Permissions.ATTACHMENT_MANAGE_ANY,
+                        Permissions.ACTIVITY_READ);
+    }
+
+    @Test
     void aNewWorkspaceStartsWithAnEmployeeDefaultRole() {
         // The setting an invitation falls back to. Null here would make the first
         // invitation that omits a role fail for no reason a user could act on.

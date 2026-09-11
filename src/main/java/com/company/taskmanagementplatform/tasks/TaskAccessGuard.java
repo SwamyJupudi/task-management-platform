@@ -55,8 +55,9 @@ import com.company.taskmanagementplatform.workspaces.WorkspaceAccessGuard;
  * read-only transaction, so an entity returned from here would reach the service already detached
  * and every change made to it would be discarded without an error.
  *
- * <p>Public, unlike the guards in {@code teams} and {@code projects}, because the {@code subtasks}
- * module authorizes through the parent task. A second copy of these seven checks would be worse.
+ * <p>Public, unlike the guards in {@code teams} and {@code projects}, because {@code subtasks},
+ * {@code comments} and {@code attachments} all authorize through the parent task. A second copy of
+ * these seven checks would be worse.
  */
 @Component
 public class TaskAccessGuard {
@@ -146,6 +147,51 @@ public class TaskAccessGuard {
         }
 
         return new TaskRef(task.getId(), task.getProjectId(), workspaceId);
+    }
+
+    /**
+     * A task the caller may add a comment or a file to.
+     *
+     * <p>Contributing is not the same as changing. Anybody who can see a task may comment on it and
+     * attach to it, so the write scope of {@link #requireChangeableTask} is deliberately absent here:
+     * an employee on a project who is neither the assignee nor the reporter of a ticket can still
+     * take part in the discussion on it, which is the whole point of a discussion.
+     *
+     * <p>What is still checked is everything else: the named permission, {@code task:read} because a
+     * comment is visible exactly when its task is, the workspace freeze, the project's readability,
+     * and the project's own freeze.
+     */
+    @Transactional(readOnly = true)
+    public TaskRef requireContributableTask(UUID workspaceId, UUID taskId, String permissionCode) {
+        return requireContribution(workspaceId, taskId, permissionCode, null).task();
+    }
+
+    /**
+     * The same, and whether the caller reaches contributions that are not their own.
+     *
+     * @param moderationCode the {@code manage_any} grant for the thing being reached, or null when
+     *     the answer does not matter
+     */
+    @Transactional(readOnly = true)
+    public TaskContribution requireContribution(
+            UUID workspaceId, UUID taskId, String permissionCode, String moderationCode) {
+
+        Set<String> granted = requirePermission(workspaceId, permissionCode);
+        if (!granted.contains(Permissions.TASK_READ)) {
+            throw new AccessDeniedException("Missing permission " + Permissions.TASK_READ);
+        }
+        workspaceGuard.requireActiveWorkspace(workspaceId);
+
+        Task task = requireTaskInWorkspace(workspaceId, taskId);
+
+        // Read scope first, for the reason requireChangeableTask gives.
+        ProjectContext project = requireReadableProject(workspaceId, task.getProjectId(), granted, taskId);
+        requireProjectNotArchived(project);
+
+        boolean moderator =
+                (moderationCode != null && granted.contains(moderationCode)) || project.ownedOrLed();
+
+        return new TaskContribution(new TaskRef(task.getId(), task.getProjectId(), workspaceId), moderator);
     }
 
     private Set<String> requirePermission(UUID workspaceId, String permissionCode) {

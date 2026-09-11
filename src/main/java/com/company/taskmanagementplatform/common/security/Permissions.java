@@ -92,6 +92,46 @@ public final class Permissions {
      */
     public static final String TASK_MANAGE_ANY = "task:manage_any";
 
+    public static final String COMMENT_CREATE = "comment:create";
+
+    /**
+     * Editing a comment, which is author-only however wide the caller's other grants are.
+     *
+     * <p>{@link #COMMENT_MANAGE_ANY} does not widen this one. An administrator may remove somebody's
+     * words; nobody may rewrite them and leave them attributed to the person who wrote them.
+     */
+    public static final String COMMENT_UPDATE = "comment:update";
+
+    public static final String COMMENT_DELETE = "comment:delete";
+
+    /**
+     * The write half of the scope layer for comments.
+     *
+     * <p>Without it, a caller may remove a comment they wrote, or one on a task in a project they own
+     * or lead the team of. With it, any comment in the workspace. It widens deletion only, for the
+     * reason given on {@link #COMMENT_UPDATE}.
+     *
+     * <p>There is deliberately no {@code comment:read} beside it. A comment is visible exactly when
+     * its task is, so {@link #TASK_READ} is the gate, and a second read grant would be a parallel
+     * model with its own resolution path that no test of the first one covers.
+     */
+    public static final String COMMENT_MANAGE_ANY = "comment:manage_any";
+
+    public static final String ATTACHMENT_CREATE = "attachment:create";
+    public static final String ATTACHMENT_DELETE = "attachment:delete";
+
+    /** The same widening for files, and with no {@code attachment:read} beside it either. */
+    public static final String ATTACHMENT_MANAGE_ANY = "attachment:manage_any";
+
+    /**
+     * Browsing the workspace-wide audit history.
+     *
+     * <p>One record's own history needs nothing but the ability to see that record, so a task's
+     * activity is gated by {@link #TASK_READ}. This code is for the listing that crosses every
+     * project in the workspace, which is administration rather than collaboration.
+     */
+    public static final String ACTIVITY_READ = "activity:read";
+
     /** The catalog as data, for the test that compares it against the seeded rows. */
     public static final Set<String> ALL = Set.of(
             USER_READ,
@@ -130,7 +170,15 @@ public final class Permissions {
             TASK_ASSIGN,
             TASK_CHANGE_STATUS,
             TASK_DELETE,
-            TASK_MANAGE_ANY);
+            TASK_MANAGE_ANY,
+            COMMENT_CREATE,
+            COMMENT_UPDATE,
+            COMMENT_DELETE,
+            COMMENT_MANAGE_ANY,
+            ATTACHMENT_CREATE,
+            ATTACHMENT_DELETE,
+            ATTACHMENT_MANAGE_ANY,
+            ACTIVITY_READ);
 
     private Permissions() {}
 }

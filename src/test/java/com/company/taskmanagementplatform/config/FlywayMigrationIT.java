@@ -65,21 +65,26 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
     private static final List<String> TASK_TABLES =
             List.of("tasks", "project_task_counters", "subtasks", "task_labels", "task_dependencies");
 
+    /** Added by {@code V7}, together with the trigger that makes the audit table append only. */
+    private static final List<String> COLLABORATION_TABLES =
+            List.of("comments", "comment_mentions", "attachments", "activity_logs");
+
     @Test
     void theMigrationsCreateExactlyTheTablesTheyShould() {
         List<String> tables = jdbc.queryForList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'", String.class);
 
         // Both directions. Every expected table is present, and nothing else is:
-        // a comment or notification table appearing here would mean a later phase
-        // had been merged early, or that Hibernate had created something behind
-        // Flyway's back.
+        // a notification table appearing here would mean a later phase had been
+        // merged early, or that Hibernate had created something behind Flyway's
+        // back.
         assertThat(tables).containsExactlyInAnyOrderElementsOf(Stream.of(
                         Stream.of("flyway_schema_history"),
                         IDENTITY_TABLES.stream(),
                         TEAM_TABLES.stream(),
                         PROJECT_TABLES.stream(),
-                        TASK_TABLES.stream())
+                        TASK_TABLES.stream(),
+                        COLLABORATION_TABLES.stream())
                 .flatMap(stream -> stream)
                 .toList());
     }
@@ -91,8 +96,6 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
         List<String> tables = jdbc.queryForList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'", String.class);
 
-        assertThat(tables)
-                .doesNotContain(
-                        "comments", "comment_mentions", "attachments", "notifications", "activity_logs");
+        assertThat(tables).doesNotContain("notifications");
     }
 }
