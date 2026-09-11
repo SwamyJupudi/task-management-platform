@@ -37,4 +37,8 @@ interface ProjectMemberRepository extends JpaRepository<ProjectMember, UUID> {
 
     /** Used when an account is removed altogether. */
     long deleteAllByUserId(UUID userId);
+
+    /** Everybody on one project, for the notification that goes to all of them. */
+    @Query("SELECT pm.userId FROM ProjectMember pm WHERE pm.projectId = :projectId")
+    List<UUID> findUserIdsByProjectId(@Param("projectId") UUID projectId);
 }

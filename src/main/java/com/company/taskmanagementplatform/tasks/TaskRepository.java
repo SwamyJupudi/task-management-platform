@@ -70,4 +70,49 @@ interface TaskRepository extends JpaRepository<Task, UUID>, JpaSpecificationExec
             ORDER BY t.taskNumber
             """)
     List<Object[]> findBlockedBy(@Param("taskIds") java.util.Collection<UUID> taskIds);
+
+    /**
+     * The digest of a set of tasks, for the {@code notifications} module's page rendering.
+     *
+     * @return rows of {@code [id, workspaceId, projectId, taskNumber, title, assigneeUserId,
+     *     reporterUserId, dueDate]}
+     */
+    @Query(
+            """
+            SELECT t.id, t.workspaceId, t.projectId, t.taskNumber, t.title,
+                   t.assigneeUserId, t.reporterUserId, t.dueDate
+            FROM Task t
+            WHERE t.id IN :taskIds AND t.deletedAt IS NULL
+            """)
+    List<Object[]> findDigests(@Param("taskIds") java.util.Collection<UUID> taskIds);
+
+    /**
+     * Live, unfinished, assigned tasks whose due date falls in a window, oldest deadline first.
+     *
+     * <p>The deadline scan's one query, and the only query in the platform whose size grows with the
+     * whole estate rather than with one workspace. It is paged for exactly that reason, and ordered
+     * by identifier as well as by date so that two tasks due the same day cannot swap places between
+     * one page and the next and leave one of them unread.
+     *
+     * <p>Unassigned tasks are excluded here rather than filtered afterwards: there is nobody to tell,
+     * and reading them only to discard them is the kind of waste the requirements name.
+     *
+     * @return rows in the shape {@link #findDigests} returns
+     */
+    @Query(
+            """
+            SELECT t.id, t.workspaceId, t.projectId, t.taskNumber, t.title,
+                   t.assigneeUserId, t.reporterUserId, t.dueDate
+            FROM Task t
+            WHERE t.dueDate BETWEEN :from AND :to
+              AND t.status <> :done
+              AND t.assigneeUserId IS NOT NULL
+              AND t.deletedAt IS NULL
+            ORDER BY t.dueDate, t.id
+            """)
+    org.springframework.data.domain.Page<Object[]> findDueDigests(
+            @Param("from") java.time.LocalDate from,
+            @Param("to") java.time.LocalDate to,
+            @Param("done") TaskStatus done,
+            org.springframework.data.domain.Pageable pageable);
 }

@@ -154,7 +154,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 4     | Projects                                  | Done        |
 | 5     | Tasks, subtasks, dependencies, views      | Done        |
 | 6     | Comments, mentions, attachments, activity | Done        |
-| 7     | Notifications                             | Not started |
+| 7     | Notifications                             | Done        |
 | 8     | Dashboards and reports                    | Not started |
 | 9     | Admin panel                               | Not started |
 | 10    | Hardening                                 | Not started |
@@ -279,10 +279,34 @@ that arrangement rather than quietly putting customer files on a disk the next
 deployment discards. Choosing the provider is the one thing between this and a
 deployable build.
 
+### What the notifications phase delivers
+
+- In-app notifications for the six triggers the requirements name, five of them
+  built from events the earlier phases were already publishing. Not one line
+  changed in the modules that publish them.
+- Read and unread state, a badge count, a paged history, and two ways to clear it.
+- A daily scan that tells people about an approaching deadline. It is idempotent,
+  so a re-run costs nothing, and a due date that moves notifies again.
+- One instance runs that scan at a time, decided by a PostgreSQL advisory lock
+  taken and released on a single held connection.
+
+**Nobody reads anybody else's notifications**, including the platform
+administrator. A notification has one audience, so this module adds no permission
+code at all; membership of the workspace and being the named recipient is the
+whole rule. Who was told what is an audit question, and the audit trail answers it.
+
+A notification does not outlive the access it implies. Leaving a workspace or a
+project removes the rows, and a feed stops naming work its reader can no longer
+open even when no membership changed.
+
 ### What it deliberately does not deliver
 
-Notifications and reporting. Comments and mentions produce the events a
-notification would be sent from, and nothing sends one yet.
+Email notifications, which the requirements call advanced and optional. Nothing
+is pushed either: delivery is polling, and server-sent events are a later swap
+that needs no change to the response shape. There are no per-person preferences,
+no digests, and no retention policy for old notifications.
+
+Reporting and dashboards.
 
 Team dashboards, workload and task statistics are listed under team management in
 the requirements and are not here. They arrive with the other analytics in phase

@@ -215,4 +215,18 @@ class OpenApiContractIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/activity'].patch").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/activity'].delete").doesNotExist());
     }
+
+    @Test
+    void documentsTheNotificationEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/notifications'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/notifications/unread-count'].get")
+                        .exists())
+                .andExpect(jsonPath(
+                                "$.paths['/api/v1/workspaces/{workspaceId}/notifications/{notificationId}/read'].patch")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/notifications/read-all'].post")
+                        .exists());
+    }
 }

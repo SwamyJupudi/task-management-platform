@@ -186,3 +186,28 @@ class SomethingIT extends AbstractIntegrationTest {
 
 Name it `*IT`, extend the base class, and it joins the Failsafe run
 automatically.
+
+## Exercising the deadline scan
+
+The scan is the platform's only scheduled job and it is **switched off in the
+test profile** (`app.notifications.deadline.enabled=false`). A suite that raced a
+background job it did not start would fail on load rather than on a defect, and it
+would do so once a day at seven in the morning.
+
+Tests drive it directly instead: `DeadlineScannerIT` autowires `DeadlineScanner`
+and calls `run()`, which does the work on the calling thread and returns how many
+rows it wrote. Nothing in that class needs `eventually`, unlike the event-driven
+notifications, which are written on the module's own thread after commit.
+
+The test profile also sets `app.notifications.deadline.batch-size=2`, so the paging
+test needs three tasks rather than five hundred to prove that the scan walks past
+its first page.
+
+`DeadlineSchedulerLockIT` holds the advisory lock from outside the application, on
+a connection of its own, and asserts that the scanner does nothing at all. That
+separation matters: if only the written rows were asserted, the unique dedupe index
+would make a completely broken lock look like a working one.
+
+To watch it run locally, set `DEADLINE_SCAN_CRON` to something immediate, for
+example `0 * * * * *` for every minute, and give a task a due date inside
+`DEADLINE_LEAD_DAYS`.

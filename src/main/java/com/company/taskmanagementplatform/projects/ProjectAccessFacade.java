@@ -1,7 +1,10 @@
 package com.company.taskmanagementplatform.projects;
 
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -150,5 +153,48 @@ public class ProjectAccessFacade {
     private int currentProgress(UUID workspaceId, UUID projectId) {
         List<Integer> found = projects.findProgress(workspaceId, projectId);
         return found.isEmpty() ? 0 : found.get(0);
+    }
+
+    /**
+     * Everybody who should hear about a project-wide change: its members and its owner.
+     *
+     * <p>The owner is unioned in rather than assumed to be a member. Ownership and membership are
+     * separate rows and a project can be owned by somebody who was never added to it, which would
+     * otherwise make the one person most responsible for a project the one person not told its status
+     * changed.
+     *
+     * <p>Ordered and deduplicated, so the caller gets a stable set rather than a list to clean up.
+     */
+    @Transactional(readOnly = true)
+    public List<UUID> audienceOf(UUID workspaceId, UUID projectId) {
+        Set<UUID> audience = new LinkedHashSet<>(members.findUserIdsByProjectId(projectId));
+
+        List<Object[]> found = projects.findSummary(workspaceId, projectId);
+        if (!found.isEmpty()) {
+            UUID ownerUserId = (UUID) found.get(0)[5];
+            if (ownerUserId != null) {
+                audience.add(ownerUserId);
+            }
+        }
+
+        return List.copyOf(audience);
+    }
+
+    /**
+     * The keys of several projects at once, for rendering a page that spans more than one.
+     *
+     * @return the keys by project identifier, missing any project that has been removed
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, String> keysOf(Collection<UUID> projectIds) {
+        if (projectIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<UUID, String> keys = new LinkedHashMap<>();
+        for (Object[] row : projects.findKeys(projectIds)) {
+            keys.put((UUID) row[0], (String) row[1]);
+        }
+        return keys;
     }
 }

@@ -634,6 +634,92 @@ therefore authorize inside the service rather than in the controller, which is t
 one place this phase departs from the platform convention; the alternative is a
 lookup, a guard, and then the same lookup again.
 
+## Notifications
+
+The requirements name six triggers. Five of them are things a person did and were
+already being published as events by the phases that own them; the sixth is the
+passage of time and has no event, because nobody performs it.
+
+| Type | Raised by | Who is told |
+| --- | --- | --- |
+| `task.assigned` | `TaskAssigned` | The new assignee |
+| `task.status_changed` | `TaskStatusChanged` | Assignee and reporter |
+| `task.deadline_approaching` | The scan | The assignee |
+| `comment.created` | `CommentCreated` | Assignee and reporter of the task |
+| `comment.mentioned` | `UserMentioned` | The person named |
+| `project.member_added` | `ProjectMemberAdded` | The person added |
+| `project.status_changed` | `ProjectStatusChanged` | Every member, plus the owner |
+
+Three rules run through all of them. **The actor is never a recipient**, because
+being told what you just did is how a feed becomes noise. **One action is one
+notification per person**, so being both assignee and reporter earns one row.
+**A mention beats the comment it is in**, since they are the same fact told twice.
+
+Recipients are relationships rather than permissions. Everybody chosen can
+already see what the message describes, so a notification cannot widen anybody's
+access.
+
+### No permission code
+
+Every other module names a permission at its controller. This one names the
+recipient instead, and the difference is deliberate: a notification has exactly
+one audience, so a `notification:read` grant would be held by everybody and would
+gate nothing. The precedent is the absence of `comment:read`.
+
+There is **no administrative read**, at any role including the platform
+administrator. Nobody reads somebody else's feed. The administrative question,
+who was told what, is the audit trail's, and it already answers it.
+
+Membership is still enforced: the workspace guard answers 404 for a workspace the
+caller has nothing to do with, exactly as everywhere else.
+
+### Writing, and what it costs
+
+After commit, in a new transaction, on the module's own single thread, which is
+the phase-six pattern copied rather than shared. Sharing one thread with the
+audit trail would let a slow recipient lookup delay an audit row, and audit rows
+are the ones that must not be lost. A notification queued when the process dies
+is lost, which is the same bargain phase six made and a better one here: a lost
+message is one somebody did not get, not a hole in a record.
+
+### Access that goes away
+
+A notification must not outlive the access it implies, which is the opposite of
+the phase-six rule for comments. Leaving a workspace, leaving a project, or
+having an account removed deletes the rows, hard rather than soft: there is
+nothing to restore, and somebody who comes back needs the current state of the
+work rather than a stale message.
+
+Access can also be lost without any membership changing. A team lead reaches a
+project by leading its team, so moving the project to another team takes their
+access away and publishes nothing this module could listen for. **The read path
+therefore re-checks visibility** and renders a row without its task name and
+without a link rather than hiding it. That check is what makes the feed safe;
+the cleanup listener is what keeps it tidy.
+
+### The deadline scan
+
+One scheduled job, daily at seven by default, and the only one in the platform.
+Daily rather than hourly because an approaching deadline is a once-a-day fact.
+
+It is idempotent by construction: every row carries a dedupe key of the task and
+the due date it was sent for, and a partial unique index refuses a second one. A
+re-run after a crash writes nothing; a due date that moves produces a new key and
+notifies again, which is right, because it is a new deadline.
+
+It pages, since it is the only query in the platform whose size grows with the
+whole estate rather than with one workspace.
+
+**One instance at a time, by PostgreSQL advisory lock.** The lock is taken and
+released on a single connection held open for the whole run, because a
+session-level lock belongs to the connection that took it: releasing through a
+second pooled connection would release nothing and report success. Closing the
+connection is the backstop. This needs no new dependency, which a
+scheduler-locking library would.
+
+Delivery is polling. Server-sent events remain a later swap and the API shape
+does not preclude one.
+
 ## Identity and authentication
 
 Reviewed and approved. Built in phase two. Where the requirements document is
@@ -867,7 +953,7 @@ Starts alongside the identity phase.
 | 4     | Projects and project membership. **Done.**                              |
 | 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries. **Done.** |
 | 6     | Comments and mentions, attachments, activity and audit logging. **Done.** |
-| 7     | Notifications with read state, history, and the deadline scheduler.     |
+| 7     | Notifications with read state, history, and the deadline scheduler. **Done.** |
 | 8     | Dashboards, reports, analytics, and the indexes they need.              |
 | 9     | Admin panel.                                                            |
 | 10    | Hardening: rate limits, headers, upload security, caching, query tuning, expired token purge. |
@@ -885,7 +971,7 @@ above.
 | -------------------------- | ------------------------------------------------------------------ |
 | Storage provider           | **Still unspecified**, and now the one thing standing between this platform and a production deployment. Phase six built `FileStore` and a local implementation; `StorageConfig` refuses to start under `prod` until a real one is wired. Choosing it needs a decision and an SDK dependency, both of which belong in a review rather than in a feature phase |
 | Task dependency semantics  | **Settled.** A single blocking relationship, confined to one project, with no type column. Built in phase five. |
-| Notification delivery      | **Unspecified.** Polling first, server-sent events as a later swap. |
+| Notification delivery      | **Settled.** Polling shipped in phase seven: a paged feed, an unread count, and two ways to mark read. Server-sent events remain a later swap and need no change to the response shape. |
 | Project progress rule      | **Implemented** in phase five, with `DONE` winning over an unfinished checklist. |
 | Attachment byte purge      | **Deferred** to hardening. A soft-deleted file keeps its stored object, so the store grows until the purge exists. |
 | Audit role separation      | **Deferred** to delivery. A trigger refuses edits to `activity_logs` today; the separate migration role and the `REVOKE` complete it. |

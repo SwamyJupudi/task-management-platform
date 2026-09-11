@@ -172,4 +172,13 @@ interface ProjectRepository extends JpaRepository<Project, UUID>, JpaSpecificati
     /** Reads the stored value back, for the event that announces a change to it. */
     @Query("SELECT p.progress FROM Project p WHERE p.id = :projectId AND p.workspaceId = :workspaceId")
     List<Integer> findProgress(@Param("workspaceId") UUID workspaceId, @Param("projectId") UUID projectId);
+
+    /**
+     * The keys of a set of projects, so a page of notifications can render "PROJ-12" without a
+     * lookup per row.
+     *
+     * @return rows of {@code [id, key]}
+     */
+    @Query("SELECT p.id, p.key FROM Project p WHERE p.id IN :projectIds")
+    List<Object[]> findKeys(@Param("projectIds") java.util.Collection<UUID> projectIds);
 }

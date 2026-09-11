@@ -69,33 +69,56 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
     private static final List<String> COLLABORATION_TABLES =
             List.of("comments", "comment_mentions", "attachments", "activity_logs");
 
+    /** Added by {@code V8}. One table, and the first migration since V3 to add no permission. */
+    private static final List<String> NOTIFICATION_TABLES = List.of("notifications");
+
     @Test
     void theMigrationsCreateExactlyTheTablesTheyShould() {
         List<String> tables = jdbc.queryForList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'", String.class);
 
-        // Both directions. Every expected table is present, and nothing else is:
-        // a notification table appearing here would mean a later phase had been
-        // merged early, or that Hibernate had created something behind Flyway's
-        // back.
+        // Both directions. Every expected table is present, and nothing else is,
+        // so a table appearing here that no migration created would mean Hibernate
+        // had made something behind Flyway's back.
         assertThat(tables).containsExactlyInAnyOrderElementsOf(Stream.of(
                         Stream.of("flyway_schema_history"),
                         IDENTITY_TABLES.stream(),
                         TEAM_TABLES.stream(),
                         PROJECT_TABLES.stream(),
                         TASK_TABLES.stream(),
-                        COLLABORATION_TABLES.stream())
+                        COLLABORATION_TABLES.stream(),
+                        NOTIFICATION_TABLES.stream())
                 .flatMap(stream -> stream)
                 .toList());
     }
 
     @Test
-    void noLaterPhaseDomainTablesExistYet() {
-        // Named explicitly because this is the invariant that will actually break
-        // when the next phase lands, and it should break loudly and in one place.
+    void everyEntityTheRequirementsNameNowExists() {
+        // This test used to guard the other way round, naming the table the next
+        // phase would bring so that merging it early broke loudly. With V8 there is
+        // no next table to name: section 18 of the requirements lists sixteen
+        // entities and the schema now holds all of them. Asserting that is worth
+        // more than asserting the absence of something nobody has designed.
         List<String> tables = jdbc.queryForList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'", String.class);
 
-        assertThat(tables).doesNotContain("notifications");
+        assertThat(tables)
+                .contains(
+                        "users",
+                        "roles",
+                        "permissions",
+                        "workspaces",
+                        "workspace_members",
+                        "teams",
+                        "team_members",
+                        "projects",
+                        "project_members",
+                        "tasks",
+                        "subtasks",
+                        "task_dependencies",
+                        "comments",
+                        "attachments",
+                        "notifications",
+                        "activity_logs");
     }
 }

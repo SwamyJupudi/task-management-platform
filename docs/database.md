@@ -22,6 +22,7 @@ Applied so far:
 | `V5`    | Projects: `projects`, `project_members`, and the shared `labels` catalog with `project_labels`. Seven project permissions, mapped and backfilled the same way |
 | `V6`    | Tasks: `tasks`, `project_task_counters`, `subtasks`, `task_labels` and `task_dependencies`. Seven task permissions, mapped and backfilled the same way |
 | `V7`    | Collaboration and audit: `comments`, `comment_mentions`, `attachments` and `activity_logs`, plus the trigger that makes the audit table append only. Eight permissions, mapped and backfilled the same way |
+| `V8`    | `notifications`, with read state and the partial unique index the deadline scan is made idempotent by. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill: a notification has one audience, the person named in it, so there is no grant to hold |
 
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
@@ -242,7 +243,7 @@ The scheduled purge is hardening-phase work.
 | `comments`         | Task-scoped and flat: no parent column, because the requirements describe no replies. `edited_at` beside `updated_at`, since a reader deserves to know when the words changed and `updated_at` moves for other reasons. Soft deleted |
 | `comment_mentions` | Join, drives mention notifications. The pair is the primary key, so naming somebody twice in one comment is one mention. Rows are derived from the body by the server and rewritten whenever it changes |
 | `attachments`      | Records `storage_provider` and `storage_key`, so changing provider is a data migration rather than a schema one. The file itself never lives on the application server. `content_type` is what the application detected from the leading bytes; what the client claimed is not stored. Soft deleted |
-| `notifications`    | Recipient, type, entity reference, `read_at`. Not soft deleted         |
+| `notifications`    | Recipient, actor (nullable, since the deadline scan is nobody), `type`, entity reference, `project_id`, `jsonb` metadata, `dedupe_key`, `read_at`. Not soft deleted. A check constraint refuses a row whose actor is its own recipient, because nobody is notified of what they just did |
 | `activity_logs`    | **Append only.** No update timestamp, no soft delete. A trigger refuses every `UPDATE` and `DELETE`, which is how `V7` enforces the requirement that audit records not be casually editable under the single database role the application currently uses. Withholding the privileges from a separate application role completes it, and is delivery-phase work |
 
 **The people columns here key to `users`, and that is the opposite of everywhere
@@ -266,6 +267,19 @@ must not, because a soft-deleted attachment still owns its stored object until t
 purge reclaims it, and handing the same key to a second file would overwrite bytes
 somebody may yet restore.
 
+**`notifications.dedupe_key` is what makes the deadline scan idempotent.** For a
+deadline row it is the task and the due date the message was sent for, and the unique
+index over `(recipient_user_id, type, dedupe_key)` is partial so that the null key
+every event-driven row carries cannot collide. A second scan writes nothing; a due
+date that moves produces a new key and notifies again, which is correct, because it
+is a new deadline. The alternative, asking the table what it had already sent, races
+with its own writing.
+
+**Notifications are the one thing here that is deliberately deleted.** A comment
+outlives its author leaving the workspace and an audit row outlives everybody. A
+notification is a message saying "come and look at this", so leaving a workspace,
+leaving a project or losing an account removes the rows outright.
+
 **`activity_logs.metadata` is `jsonb` rather than a column per action.** Every action
 carries different facts, and a table with a column for each would be mostly nulls and
 would need a migration for every new kind of event. No prose is stored: the sentence
@@ -286,7 +300,12 @@ Created with the tables that need them, not retrofitted.
 | `subtasks (assignee_user_id, status)`    | Personal workload               |
 | `task_dependencies (depends_on_task_id)` | What a task blocks              |
 | `task_labels (label_id)`                 | Filtering by label              |
-| `notifications (recipient_user_id, read_at)` | Unread badge and history    |
+| `notifications (recipient_user_id, read_at)` | Unread badge                |
+| `notifications (recipient_user_id, created_at desc)` | The history listing |
+| `notifications (workspace_id)`           | Cleanup when somebody leaves one |
+| `notifications (project_id)`             | Cleanup when somebody leaves a project |
+| `notifications (entity_type, entity_id)` | Finding what points at a record |
+| `notifications (recipient_user_id, type, dedupe_key)` partial unique | The deadline scan's idempotency |
 | `activity_logs (workspace_id, created_at desc)` | Audit browsing           |
 | `activity_logs (entity_type, entity_id)` | History for one record          |
 | `activity_logs (project_id, created_at desc)` | One project's history, and the narrowing a task's history runs inside |
