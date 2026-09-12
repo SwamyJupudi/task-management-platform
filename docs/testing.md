@@ -36,7 +36,7 @@ their infrastructure form. The rest arrive with the code they describe.
 | Kind        | Required by                                                      | Arrives in |
 | ----------- | ---------------------------------------------------------------- | ---------- |
 | Unit        | Services, business logic, utilities, validation                  | Every phase |
-| Integration | Auth, project creation, task creation, assignment, permissions   | Phases 2-7 |
+| Integration | Auth, project creation, task creation, assignment, permissions   | Phases 2-8 |
 | Concurrency | Refresh rotation, task numbering                                 | Where a race is possible |
 | API         | Every major endpoint                                             | Phases 2-9 |
 | End to end  | Login, create project, add member, create task, assign, complete | Phase 11   |
@@ -161,6 +161,72 @@ stay allowed.
 somebody be removed at all, and the ordering between them. That ordering is the
 fragile part, and getting it wrong produces a failure that appears only when the
 person being removed happens to have work assigned.
+
+## The dashboards and reports phase
+
+A reporting feature fails differently from everything before it. A mistake does
+not throw, does not return the wrong status, and does not show a row that should
+have been hidden. It changes a number. The response is 200, the shape is right,
+and the figure is plausible. Three tests in this phase exist because of that, and
+they are the ones to keep.
+
+`ReportVisibilityIT` is the one to keep honest, playing the role
+`ProjectVisibilityIT` and `TaskVisibilityIT` play one level down. Read scope
+decides which rows an aggregate counts, so a mistake in it silently discloses the
+shape of a workspace: how much work there is, how late it is, and how many people
+are carrying it. Every case holds identical permissions and differs only in the
+caller's relationship to the work. Three cases exist only at this level: a
+`projectId`, a `teamId` and an `assigneeUserId` filter must each narrow a figure
+and must never widen one.
+
+`ReportDefinitionsTest` guards against drift. "Overdue" is expressed twice in the
+platform, once as the `overdue` filter on the task listing and once as the
+predicate behind every figure in this phase. If the two ever disagree, a count
+and the list it links to differ by a row and nobody can say which is right.
+Nothing else in the suite would notice. The unit test pins the rule; the last
+case in `ReportAccuracyIT` asks both paths the same question against real data
+and asserts they agree, which is the half that catches a drift in the SQL rather
+than in the reading of it.
+
+`ReportScaleIT` catches the defect the facade design exists to prevent. An N+1 in
+a report is not a correctness bug: it passes every test that checks numbers, and
+it falls over the first time a real workspace opens the page. It asserts the
+shape of the work rather than the time it takes, by doubling the data and
+asserting the query count does not move. That is stronger than a fixed number and
+does not need editing every time a panel is added. A timing assertion would fail
+on a slow machine and be deleted within a month.
+
+`ReportSchemaIT` is written in SQL like its identity, teams, projects and tasks
+counterparts, because an index is a property of the schema rather than of the
+service layer. It asserts that each index `V9` creates exists **with its partial
+predicate**, which is the half that is easy to lose: an index missing its
+`WHERE deleted_at IS NULL` still answers every query correctly and quietly holds
+a row for every task ever deleted. It deliberately does **not** assert query
+plans. An `EXPLAIN` assertion reads stronger and is weaker: a planner is right to
+choose a sequential scan over fifty rows, so such a test fails on data volume
+rather than on a defect.
+
+`ReportTrendsIT` carries the phase's one exception to the rule that fixtures
+build data through the services. The task service sets `completed_at` from
+`Instant.now()` rather than from an injected clock, so no test can otherwise
+produce a task finished last Tuesday, and a trend that cannot be tested over time
+cannot be tested at all. That class writes the column directly in SQL. The
+alternative was to take a clock into a phase-five service for the sake of a test
+here. The exception is confined to that class and to that one column, and it is
+what lets the timezone case be asserted: work finished at 23:00 local falls in the
+local day, not the UTC one.
+
+The test profile lowers three bounds so the tests that prove those bounds exist
+can reach them: `app.reports.max-period-days=40` rather than a year,
+`app.reports.max-page-size=25` rather than a hundred, and an explicit
+`app.reports.upcoming-lead-days=7`. The page cap stays **above** the endpoints'
+own default page size of twenty, or every request that named no size at all would
+be refused by the guard meant for the ones that name a large one.
+
+Four existing tests pick this phase up with no edit: `ProtectedRouteMatrixIT`
+walks the new routes, `PermissionCatalogIT` stays green because no permission was
+added, `OpenApiContractIT` picks up the two new controllers, and
+`ApplicationContextIT` picks up the new beans.
 
 ## Mail in tests
 

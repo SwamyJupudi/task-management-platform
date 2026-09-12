@@ -1,5 +1,6 @@
 package com.company.taskmanagementplatform.teams;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,6 +27,17 @@ interface TeamRepository extends JpaRepository<Team, UUID> {
 
     Page<Team> findAllByWorkspaceIdAndStatusAndDeletedAtIsNull(
             UUID workspaceId, TeamStatus status, Pageable pageable);
+
+    /** How many live teams a workspace has, for the administrator's dashboard. */
+    long countByWorkspaceIdAndDeletedAtIsNull(UUID workspaceId);
+
+    /**
+     * A named set of this workspace's live teams, for a report page that spans several.
+     *
+     * <p>By workspace as well as by identifier, like every other lookup here, so a team from
+     * elsewhere is simply absent rather than reported.
+     */
+    List<Team> findAllByWorkspaceIdAndIdInAndDeletedAtIsNull(UUID workspaceId, Collection<UUID> ids);
 
     /** Every team this person leads in one workspace, deleted ones included, for the cleanup path. */
     List<Team> findAllByWorkspaceIdAndLeadUserId(UUID workspaceId, UUID leadUserId);

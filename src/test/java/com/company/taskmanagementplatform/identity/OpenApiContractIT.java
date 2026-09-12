@@ -229,4 +229,41 @@ class OpenApiContractIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/notifications/read-all'].post")
                         .exists());
     }
+
+    @Test
+    void documentsTheDashboardAndReportEndpoints() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/dashboard/me'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/dashboard/workspace'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/teams/{teamId}/dashboard'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/reports/projects'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/reports/tasks/distribution'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/reports/tasks/overdue'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/reports/workload'].get")
+                        .exists())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/reports/trends'].get")
+                        .exists());
+    }
+
+    @Test
+    void documentsNoWayToWriteAReport() throws Exception {
+        // Phase eight reads and returns. A mapped write anywhere under it would mean
+        // a figure somebody could set rather than derive, and the document is what a
+        // client is generated from, so this is where to say so.
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/reports/projects'].post")
+                        .doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/dashboard/me'].post")
+                        .doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/dashboard/workspace'].delete")
+                        .doesNotExist());
+    }
 }

@@ -23,6 +23,17 @@ interface ActivityLogRepository extends JpaRepository<ActivityLog, UUID> {
             UUID workspaceId, UUID projectId, Pageable pageable);
 
     /**
+     * One person's own actions in one workspace, newest first.
+     *
+     * <p>Added for the employee dashboard's "recent activity", which is a record of what this person
+     * did rather than of what happened around them. It is not a widening of the audit read: every row
+     * it returns names the caller as the actor, so it discloses nothing they did not do themselves.
+     * Browsing the workspace remains {@code activity:read}.
+     */
+    Page<ActivityLog> findAllByWorkspaceIdAndActorUserIdOrderByCreatedAtDesc(
+            UUID workspaceId, UUID actorUserId, Pageable pageable);
+
+    /**
      * Everything that happened to one task, including what happened to the things hanging off it.
      *
      * <p>A comment, a subtask and an attachment each record themselves as their own entity, because

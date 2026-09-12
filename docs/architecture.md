@@ -720,6 +720,141 @@ scheduler-locking library would.
 Delivery is polling. Server-sent events remain a later swap and the API shape
 does not preclude one.
 
+## Dashboards and reports
+
+One module, `reports`, holding both. The requirements' backend module list names
+`reports` and does not name `dashboard`; the frontend list names both, because a
+dashboard is a screen. A dashboard figure and a report figure are the same query
+asked at a different width, so two backend modules would mean two
+implementations of "overdue" with nothing holding them together. The controllers
+are split by audience, the services by subject, and the definitions live in one
+place.
+
+### Facades, not a documented SQL exception
+
+Reports aggregate over tasks, subtasks, projects, teams and memberships, which
+puts direct pressure on the rule that a module never reaches into another
+module's repository or entity. There is exactly one approved exception today,
+the project-progress statement, and it was justified by a correctness argument
+about races that does not apply to a read.
+
+**No new exception was taken.** Each owning module publishes a read-only
+analytics facade that answers with value records and does its aggregation in its
+own SQL: `TaskAnalyticsFacade`, `SubtaskAnalyticsFacade`,
+`ProjectAnalyticsFacade`, `TeamAnalyticsFacade`, `WorkspaceSettingsFacade`.
+`reports` composes those answers and resolves identifiers to names.
+
+This works without cross-module joins because every grouping the requirements
+ask for groups by a column the owning module already holds: tasks by status,
+priority, project, assignee and date; projects by status and team; teams by their
+own roster. `reports` stitches a project identifier to a key and a user
+identifier to a name through the existing bulk lookups, which are map lookups
+rather than joins and are already the platform's answer to N+1.
+
+The precedent is exact. `TaskNotificationFacade` is a second, read-only,
+non-authorizing facade sitting beside `TaskAccessGuard`, created for this reason
+in phase seven. The cost is real and worth naming: five new facades and a dozen
+new repository methods, which makes the phase look wide rather than deep.
+
+### Scope is inherited, so no permission was added
+
+Every project-derived figure is computed over `ProjectScope`, the same value the
+task listing narrows by, obtained from `ProjectAccessFacade.readableScope`.
+`project:read_any` widens a report to the whole workspace exactly as it widens a
+task listing.
+
+There is deliberately no `report:read` and no `report:read_any`. A code every
+working role would hold gates nothing, and a second read grant beside
+`project:read_any` would be a parallel model with its own resolution path that no
+test of the first one covers. That is phase five's argument for no
+`task:read_any` and phase six's for no `comment:read`, restated.
+
+The scope predicate is built **into** each aggregate query and joined to the
+filters with AND. It is never applied to a result afterwards. A predicate applied
+after aggregation would be a leak that returns 200 and looks correct, which is
+why `ReportVisibilityIT` is the test to keep honest here.
+
+The administrator's dashboard requires `project:read_any`, plus `member:read` and
+`team:read` for the two headcounts. A caller without the first is refused rather
+than narrowed: a workspace-wide figure computed over one person's projects is a
+wrong number rather than a discreet one.
+
+### The team dashboard is not narrowed per viewer
+
+It requires `team:read`, plus either leading that team or holding
+`project:read_any`; anybody else gets 404, matching the rule that an unreachable
+record is reported as missing. The figures are then over the whole team, whoever
+asked.
+
+This is the one deliberate departure from the scope rule in the phase. A team
+dashboard narrowed per viewer would hand two people different numbers under the
+same heading and label both "team performance". A partial answer is worse than a
+refusal here, so the gate is narrower instead of the figures.
+
+### The definitions
+
+The requirements name these figures and define none of them. These are ours, and
+`database.md` carries them in full beside the progress rule:
+
+- **open** - any status but `DONE`, not deleted
+- **overdue** - open, dated, and that date already past. Finished work is never
+  overdue however late it was
+- **upcoming** - open, dated, due between today and the lead window inclusive
+- **completed** - `DONE`, dated by `completed_at`
+- **progress** - the existing derived column, read and never recomputed
+- **workload** - per person: open, in progress, overdue, completed in the period,
+  and effort summed over open work only
+
+"Today" is computed in the workspace's own timezone, not in UTC. A dashboard that
+called work overdue at midnight UTC would be wrong for most of a company for most
+of the day. `workspaces.timezone` is free text with only a length check behind
+it, so an unreadable value falls back to UTC with a WARN rather than taking a
+whole workspace's reporting away; validating the column on write is recorded
+under *Still open*.
+
+**Overdue is now expressed in two places**: the `overdue` filter on the task
+listing, and the reports' own predicate. If they ever disagree, a count and the
+list it links to differ by a row with nothing to say which is right.
+`ReportDefinitionsTest` pins the rule and `ReportAccuracyIT` checks the two paths
+against each other on real data.
+
+### Trends read `completed_at`, with a stated caveat
+
+`completed_at` is held consistent with status by a check constraint, so it is
+exact and cheap to index. It is also rewritten: reopening a finished task clears
+it, so that task leaves the historical bucket it was once in.
+
+The alternative source is `activity_logs`, which is append-only and therefore the
+true history, but reaching completions in it means filtering `jsonb` metadata
+with no index behind it, which `database.md` deliberately defers. The caveat is
+written down rather than discovered later.
+
+### Nothing is cached, and nothing is precomputed
+
+No materialized view, no rollup table, no scheduled aggregation, no application
+cache. This follows the standing decision that caching is hardening-phase work
+behind a shared cache, and it keeps the phase from shipping a second copy of the
+truth that can go stale. The cost is that every figure is computed at request
+time, bounded only by the window and page caps in `app.reports.*`; the first
+evidence that it is too slow will be production, and the answer then is the
+shared cache rather than a rollup table added now.
+
+Because nothing is cached, every figure is as current as the transaction that
+read it, and the panels of one response are mutually consistent because they
+share that transaction. Two separate requests may legitimately disagree if
+somebody finished a task between them.
+
+### Nothing is published and nothing is consumed
+
+`reports` is read-only. No event, no listener, no executor, no scheduled job, no
+advisory lock, and every service method is `@Transactional(readOnly = true)`.
+
+`ProjectEvents.ProjectProgressChanged` stays **unconsumed**, and that is a
+decision rather than an oversight. Its javadoc anticipated that phase eight's
+dashboards would want to hear about real changes; with no cache to invalidate
+there is nothing for a listener to do. The event stays where it is, useful the
+day a cache arrives.
+
 ## Identity and authentication
 
 Reviewed and approved. Built in phase two. Where the requirements document is
@@ -954,7 +1089,7 @@ Starts alongside the identity phase.
 | 5     | Tasks, subtasks, dependencies, and the list, board, calendar queries. **Done.** |
 | 6     | Comments and mentions, attachments, activity and audit logging. **Done.** |
 | 7     | Notifications with read state, history, and the deadline scheduler. **Done.** |
-| 8     | Dashboards, reports, analytics, and the indexes they need.              |
+| 8     | Dashboards, reports, analytics, and the indexes they need. **Done.**    |
 | 9     | Admin panel.                                                            |
 | 10    | Hardening: rate limits, headers, upload security, caching, query tuning, expired token purge. |
 | 11    | Delivery: environments, deployment, backups, end-to-end suite, docs.    |
@@ -980,3 +1115,5 @@ above.
 | Task full-text search      | Deferred to hardening. `q` folds and matches the title and the rendered key; the trigram or GIN index belongs with the other query tuning. |
 | Kanban reordering          | Deferred. `board_position` exists, sorts, and is settable; gapless drag ordering is its own design. |
 | Custom workspace roles     | Deferred. Schema supports them, none are seeded.                    |
+| Report caching             | **Deferred** to hardening, behind the shared cache. Phase eight computes every figure at request time and precomputes nothing, so an aggregate's cost is paid on every request. The window and page caps in `app.reports.*` bound one request; nothing bounds the rate of them. |
+| Workspace timezone validation | **Deferred** to hardening. `workspaces.timezone` is free text with a length check and nothing asserting it names a real zone. Phase eight is the first thing that reads it, and falls back to UTC with a WARN rather than failing a report. |

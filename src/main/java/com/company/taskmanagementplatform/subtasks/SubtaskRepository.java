@@ -39,4 +39,16 @@ interface SubtaskRepository extends JpaRepository<Subtask, UUID> {
     List<Subtask> findAllByAssigneeUserId(UUID assigneeUserId);
 
     int countByTaskIdAndDeletedAtIsNull(UUID taskId);
+
+    /**
+     * Open checklist items against one person, for the employee dashboard.
+     *
+     * <p>Counted in the database rather than by loading the rows, which is the requirements' own
+     * instruction about not fetching records unnecessarily applied to the smallest table that could
+     * still grow large.
+     */
+    long countByWorkspaceIdAndAssigneeUserIdAndStatusNotAndDeletedAtIsNull(
+            UUID workspaceId,
+            UUID assigneeUserId,
+            com.company.taskmanagementplatform.tasks.TaskStatus status);
 }

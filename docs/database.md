@@ -23,6 +23,7 @@ Applied so far:
 | `V6`    | Tasks: `tasks`, `project_task_counters`, `subtasks`, `task_labels` and `task_dependencies`. Seven task permissions, mapped and backfilled the same way |
 | `V7`    | Collaboration and audit: `comments`, `comment_mentions`, `attachments` and `activity_logs`, plus the trigger that makes the audit table append only. Eight permissions, mapped and backfilled the same way |
 | `V8`    | `notifications`, with read state and the partial unique index the deadline scan is made idempotent by. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill: a notification has one audience, the person named in it, so there is no grant to hold |
+| `V9`    | **Indexes only.** Eight of them, for the dashboards and reports. No table, no column, no trigger, no constraint and no seed row: phase eight derives every figure from what `V3` to `V7` already store. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill, for the second time after `V8` and for a different reason: a report is computed over the caller's project read scope, and `project:read_any` already widens it, so a `report:read_any` beside it would be that grant under a second name |
 
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
@@ -322,6 +323,14 @@ Created with the tables that need them, not retrofitted.
 | `projects (team_id)`                     | Filter by team, and detaching   |
 | `project_members (project_id)`           | One project's roster            |
 | `project_members (user_id)`              | Visibility, and cleanup         |
+| `tasks (workspace_id, status)`           | Workspace-wide status distribution, and the open-task count |
+| `tasks (workspace_id, assignee_user_id, status)` | Employee workload, and the employee dashboard's own counts |
+| `tasks (workspace_id, completed_at)` doubly partial | Completion trends, and "completed in period". Only finished tasks carry the column |
+| `tasks (workspace_id, created_at)`      | The created half of the productivity trend |
+| `tasks (project_id, due_date)`          | Overdue and upcoming inside one project or one scope list |
+| `subtasks (workspace_id, assignee_user_id, status)` | Personal checklist load on the employee dashboard |
+| `projects (workspace_id, team_id, status)` | Team performance, which groups a workspace's projects by team |
+| `activity_logs (workspace_id, actor_user_id, created_at desc)` | One person's own recent activity. Not partial: `activity_logs` is never soft-deleted |
 
 All partial on non-deleted rows where the table is soft-deletable, except the unique
 on `tasks (project_id, task_number)` and the unique on `attachments.storage_key`,
@@ -338,6 +347,53 @@ the search term and matches the title and the rendered `PROJ-12` form, narrowed
 first by the visibility predicate and by paging. The trigram or GIN index, and the
 extension it needs, belong with the other query tuning in the hardening phase.
 Shipping an index nothing queries would be worse than not shipping it.
+
+## Business rule: report definitions
+
+**Implemented in phase eight.** The requirements name these figures and define
+none of them. These definitions are ours, and every query in that phase is
+written against them. They sit here rather than in the code alone because two
+places already compute "overdue" and a third will be tempted to.
+
+| Term | Definition |
+| --- | --- |
+| **open** | status is not `DONE`, and the row is not soft-deleted |
+| **overdue** | open, `due_date` is set, and `due_date` is strictly before today. Work due *today* is not overdue: the day is not over |
+| **upcoming** | open, `due_date` is set, and between today and today plus the lead window, both ends included |
+| **completed** | status is `DONE`, dated by `completed_at` |
+| **progress** | the derived `projects.progress` column. Phase eight reads it and never recomputes it, so there is one rule for it rather than two |
+| **workload** | per person: open, in progress, overdue, completed in the period, plus estimated and actual minutes summed over **open work only** |
+| **productivity** | tasks completed per bucket against tasks created per bucket |
+
+**Finished work is never overdue, however late it was.** A list of overdue work
+is a list of what somebody has to act on, and a task delivered three days late
+last month is not on it. This matches the `overdue` filter on the task listing
+exactly, and the two must not drift: if they ever disagree, a dashboard count and
+the list it links to differ by a row with nothing to say which is right.
+
+**"Today" is the workspace's own today.** Every date comparison runs in
+`workspaces.timezone`, not in UTC, and so does the bucketing of a trend. A
+company whose day ends at local midnight would otherwise see Friday evening's
+work counted against Saturday.
+
+That column is free text with a length check and nothing asserting it names a
+real zone, which is a gap that predates this phase and that this phase is the
+first to read. An unreadable value falls back to UTC with a WARN rather than
+taking a whole workspace's reporting away. Validating it on write is hardening
+work.
+
+**Every percentage and average is computed in integer or `numeric` arithmetic**,
+with the denominator guarded, exactly as the progress statement does. No floating
+point, so an all-finished figure reads a hundred rather than ninety-nine, and an
+empty denominator reads zero rather than null.
+
+**Trends are dated by `tasks.completed_at`, with a known caveat.** A check
+constraint holds that column consistent with status, so it is exact and cheap to
+index. It is also rewritten: reopening a finished task clears it, and that task
+then leaves the historical bucket it was once counted in. The append-only truth
+is in `activity_logs`, but reaching completions there means filtering `jsonb`
+metadata with no index behind it, which this document defers with the rest of the
+query tuning. Revisit the two together.
 
 ## Business rule: project progress
 

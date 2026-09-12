@@ -141,6 +141,53 @@ public class MembershipService {
         members.delete(member);
     }
 
+    /**
+     * How many people are on a workspace roster, for the administrator's headline figure.
+     *
+     * <p>Counted in the database. A dashboard that loaded every member in order to call
+     * {@code size()} on the list would be exactly the waste the requirements name, and it would grow
+     * worse as the company did.
+     */
+    @Transactional(readOnly = true)
+    public long countMembers(UUID workspaceId) {
+        return members.countByWorkspaceId(workspaceId);
+    }
+
+    /**
+     * The same headcount broken down by role, keyed by role slug.
+     *
+     * <p>The requirements say "total employees" and the platform has three working roles, so the
+     * split is what lets a dashboard say how many of the total are administrators without a second
+     * request.
+     *
+     * <p><strong>Every role of the workspace is present, including those nobody holds.</strong> The
+     * grouped query returns no row for an empty role, which is right for it and wrong for the chart
+     * this feeds: a missing column makes a client know the role list to draw the axis, and a role
+     * that quietly vanished when its last holder left would read as a role that was never there. The
+     * gap is filled here rather than in the reports module because this is where the workspace's own
+     * role list is already in hand; asking for it a second time further up would be a second place
+     * for it to go stale.
+     *
+     * @return counts by role slug, for example {@code {ADMIN=2, EMPLOYEE=17, TEAM_LEAD=0}}
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Long> countMembersByRole(UUID workspaceId) {
+        Map<UUID, Role> rolesById = rolesOf(workspaceId);
+
+        Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        for (Role role : rolesById.values()) {
+            counts.put(role.getSlug(), 0L);
+        }
+
+        for (Object[] row : members.countByWorkspaceIdGroupedByRole(workspaceId)) {
+            Role role = rolesById.get((UUID) row[0]);
+            if (role != null) {
+                counts.merge(role.getSlug(), ((Number) row[1]).longValue(), Long::sum);
+            }
+        }
+        return Map.copyOf(counts);
+    }
+
     @Transactional(readOnly = true)
     public boolean isMember(UUID workspaceId, UUID userId) {
         return members.existsByWorkspaceIdAndUserId(workspaceId, userId);

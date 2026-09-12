@@ -181,4 +181,95 @@ interface ProjectRepository extends JpaRepository<Project, UUID>, JpaSpecificati
      */
     @Query("SELECT p.id, p.key FROM Project p WHERE p.id IN :projectIds")
     List<Object[]> findKeys(@Param("projectIds") java.util.Collection<UUID> projectIds);
+
+    /**
+     * How many live projects hold each status, inside the caller's reach.
+     *
+     * <p>Counted here rather than by loading projects and counting them in Java, which is what the
+     * requirements mean by not fetching records unnecessarily. The result has at most five rows
+     * whatever the size of the workspace.
+     *
+     * <p>{@code unrestricted} is the caller holding {@code project:read_any}. When it is true the
+     * identifier list is never consulted, and the facade passes a single impossible identifier so the
+     * {@code IN} list is never empty; an empty one is not valid SQL.
+     *
+     * @return rows of {@code [status, count]}
+     */
+    @Query(
+            """
+            SELECT p.status, count(p) FROM Project p
+            WHERE p.workspaceId = :workspaceId
+              AND p.deletedAt IS NULL
+              AND (:unrestricted = true OR p.id IN :projectIds)
+            GROUP BY p.status
+            """)
+    List<Object[]> countByStatusInScope(
+            @Param("workspaceId") UUID workspaceId,
+            @Param("unrestricted") boolean unrestricted,
+            @Param("projectIds") Collection<UUID> projectIds);
+
+    /**
+     * One row per team: how many projects it runs and how far along they are on average.
+     *
+     * <p>Native, so the average is taken in {@code numeric} and floored the way the progress
+     * statement itself computes, rather than in floating point where a team whose projects are all
+     * finished could read ninety-nine.
+     *
+     * <p>Projects with no team are excluded rather than gathered under a null key. The requirements
+     * ask for team performance, and a row naming no team is one nobody can open.
+     *
+     * @return rows of {@code [teamId, projectCount, averageProgress]}
+     */
+    @Query(
+            nativeQuery = true,
+            value =
+                    """
+                    SELECT p.team_id,
+                           count(*),
+                           COALESCE(floor(avg(p.progress))::int, 0)
+                    FROM projects p
+                    WHERE p.workspace_id = :workspaceId
+                      AND p.deleted_at IS NULL
+                      AND p.team_id IS NOT NULL
+                      AND (:unrestricted = TRUE OR p.id IN (:projectIds))
+                    GROUP BY p.team_id
+                    """)
+    List<Object[]> statsByTeamInScope(
+            @Param("workspaceId") UUID workspaceId,
+            @Param("unrestricted") boolean unrestricted,
+            @Param("projectIds") Collection<UUID> projectIds);
+
+    /**
+     * The reporting facts about a set of projects, so a page spanning several needs one query.
+     *
+     * @return rows of {@code [id, workspaceId, key, name, status, ownerUserId, teamId, progress,
+     *     updatedAt]}
+     */
+    @Query(
+            """
+            SELECT p.id, p.workspaceId, p.key, p.name, p.status, p.ownerUserId, p.teamId,
+                   p.progress, p.updatedAt
+            FROM Project p
+            WHERE p.id IN :projectIds AND p.deletedAt IS NULL
+            """)
+    List<Object[]> findSummaries(@Param("projectIds") Collection<UUID> projectIds);
+
+    /**
+     * Which team runs each live project of a named set of teams, in one query.
+     *
+     * <p>Team performance needs the tasks of a team's projects, and tasks carry a project rather than
+     * a team. Asking project by project, or team by team, is exactly the shape that turns a dashboard
+     * panel into N+1; this answers for every team at once.
+     *
+     * @return rows of {@code [teamId, projectId]}
+     */
+    @Query(
+            """
+            SELECT p.teamId, p.id FROM Project p
+            WHERE p.workspaceId = :workspaceId
+              AND p.deletedAt IS NULL
+              AND p.teamId IN :teamIds
+            """)
+    List<Object[]> findIdsGroupedByTeam(
+            @Param("workspaceId") UUID workspaceId, @Param("teamIds") Collection<UUID> teamIds);
 }

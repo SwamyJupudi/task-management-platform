@@ -155,7 +155,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 5     | Tasks, subtasks, dependencies, views      | Done        |
 | 6     | Comments, mentions, attachments, activity | Done        |
 | 7     | Notifications                             | Done        |
-| 8     | Dashboards and reports                    | Not started |
+| 8     | Dashboards and reports                    | Done        |
 | 9     | Admin panel                               | Not started |
 | 10    | Hardening                                 | Not started |
 | 11    | Delivery: environments, deployment, docs  | Not started |
@@ -299,6 +299,37 @@ A notification does not outlive the access it implies. Leaving a workspace or a
 project removes the rows, and a feed stops naming work its reader can no longer
 open even when no membership changed.
 
+### What the dashboards and reports phase delivers
+
+- Three dashboards: your own work, one team's, and the whole workspace. Each is
+  assembled in a single read-only transaction, so the panels of one response
+  agree with each other.
+- Five reports: project completion and progress, task distribution, overdue work,
+  workload per person, and productivity trends. Each filters, and the two
+  listings page and sort within an allowlist.
+- Eight indexes, chosen for the queries this phase actually writes. No new table,
+  no new column, and no new permission.
+
+**No report can show you a number you could not already have listed.** Every
+figure is computed over the same project read scope a task listing is narrowed
+by, and that scope is applied inside the aggregate query rather than to its
+result, so no filter can widen it. `project:read_any` widens a report exactly as
+it widens a listing, which is why the phase adds no permission of its own.
+
+Every aggregate is computed in SQL by the module that owns the table. No endpoint
+loads a collection of rows in order to count it, and no panel resolves a name one
+row at a time. Each module publishes a small read-only analytics facade instead,
+so the rule that a module never reads another's tables survives a phase that
+exists to read across all of them.
+
+"Today" is the workspace's own today. Overdue work, upcoming deadlines and the
+buckets of a chart are all computed in `workspaces.timezone`, not in UTC.
+
+**Finished work is never overdue, however late it was.** That definition and five
+others are written down in [`docs/database.md`](docs/database.md), because a
+dashboard count and the list it links to disagreeing by one row is the worst kind
+of defect a reporting feature can ship.
+
 ### What it deliberately does not deliver
 
 Email notifications, which the requirements call advanced and optional. Nothing
@@ -306,11 +337,20 @@ is pushed either: delivery is polling, and server-sent events are a later swap
 that needs no change to the response shape. There are no per-person preferences,
 no digests, and no retention policy for old notifications.
 
-Reporting and dashboards.
+Nothing in the reporting phase is cached or precomputed. There is no
+materialized view, no rollup table and no scheduled aggregation, so every figure
+costs its query on every request. Caching belongs with the shared cache in the
+hardening phase, and shipping a second copy of the truth now would only mean one
+that can go stale.
 
-Team dashboards, workload and task statistics are listed under team management in
-the requirements and are not here. They arrive with the other analytics in phase
-eight.
+There is no export. No CSV, no PDF, no scheduled delivery and no email digest:
+the requirements ask for none, and an export raises a size policy and an audit
+question about who took the company's numbers. There is no report builder, no
+saved report and no user-defined metric.
+
+Dashboards are request-response rather than live, like the notification feed
+beside them. Platform-wide analytics across workspaces belong to the admin panel
+in phase nine; every endpoint here is scoped to one workspace.
 
 Tasks cannot be moved between projects, since the number they are known by belongs
 to one. Kanban drag-ordering and full-text search are both deferred: the board

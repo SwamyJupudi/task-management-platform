@@ -54,6 +54,18 @@ public class ActivityService {
     }
 
     /**
+     * One person's own recent actions, for their dashboard.
+     *
+     * <p>Needs no permission beyond membership, and widens nothing: every row names the caller as the
+     * actor. Browsing what anybody else did is still {@code activity:read}, which only an
+     * administrator holds, and one record's history is still gated by being able to see that record.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ActivityResponse> forActor(UUID workspaceId, UUID actorUserId, Pageable pageable) {
+        return map(logs.findAllByWorkspaceIdAndActorUserIdOrderByCreatedAtDesc(workspaceId, actorUserId, pageable));
+    }
+
+    /**
      * One task's history, including what happened to its comments, files and checklist.
      *
      * <p>A task history that showed only rows whose entity is the task would have no comments in it,
