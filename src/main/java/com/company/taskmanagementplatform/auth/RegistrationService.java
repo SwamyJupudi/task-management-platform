@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.users.UserAccount;
 import com.company.taskmanagementplatform.users.UserAccountService;
+import com.company.taskmanagementplatform.users.UserAdminEvents;
 
 /**
  * Registration and the verification of an address.
@@ -60,6 +61,30 @@ public class RegistrationService {
         users.findByEmail(email)
                 .filter(account -> !account.isEmailVerified())
                 .ifPresent(account -> sendVerification(account.id(), account.email()));
+    }
+
+    /**
+     * Sends another verification message on somebody else's behalf, for the admin panel.
+     *
+     * <p>Answers honestly where {@link #resendVerification} deliberately does not. That one is
+     * reachable without signing in and must not become a way of testing addresses; this one is
+     * reached only by a caller holding {@code user:update} on a platform role, who can already list
+     * every account, so 404 for a missing account and 409 for one that is already verified are both
+     * useful rather than disclosing.
+     */
+    @Transactional
+    public void resendVerificationFor(UUID actorUserId, UUID userId) {
+        UserAccount account = users.findById(userId)
+                .orElseThrow(() -> com.company.taskmanagementplatform.common.error.ResourceNotFoundException.of(
+                        "User", userId));
+
+        if (account.isEmailVerified()) {
+            throw new com.company.taskmanagementplatform.common.error.ConflictException(
+                    "That address has already been verified.");
+        }
+
+        sendVerification(account.id(), account.email());
+        events.publishEvent(new UserAdminEvents.VerificationResent(actorUserId, userId));
     }
 
     private void sendVerification(UUID userId, String email) {

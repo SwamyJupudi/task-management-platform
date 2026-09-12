@@ -48,6 +48,25 @@ public class ActivityService {
         return map(logs.findAllByWorkspaceIdOrderByCreatedAtDesc(workspaceId, pageable));
     }
 
+    /**
+     * The platform audit trail: the rows that belong to no workspace.
+     *
+     * <p>Account administration and platform-role grants. Every row here was written by somebody
+     * holding a platform role, and reading it needs one too. It is deliberately disjoint from {@link
+     * #forWorkspace}: a row appears in exactly one of the two, decided by whether its workspace is
+     * null, so neither listing can ever be a way into the other.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ActivityResponse> forPlatform(Pageable pageable) {
+        return map(logs.findAllByWorkspaceIdIsNullOrderByCreatedAtDesc(pageable));
+    }
+
+    /** How many audit rows were written since a moment, for the platform statistics panel. */
+    @Transactional(readOnly = true)
+    public long countSince(java.time.Instant since) {
+        return logs.countByCreatedAtGreaterThanEqual(since);
+    }
+
     @Transactional(readOnly = true)
     public PageResponse<ActivityResponse> forProject(UUID workspaceId, UUID projectId, Pageable pageable) {
         return map(logs.findAllByWorkspaceIdAndProjectIdOrderByCreatedAtDesc(workspaceId, projectId, pageable));

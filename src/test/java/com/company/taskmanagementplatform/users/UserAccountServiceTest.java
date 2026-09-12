@@ -322,9 +322,121 @@ class UserAccountServiceTest {
         assertThat(reactivated.status()).isEqualTo(UserStatus.PENDING_VERIFICATION);
     }
 
+    // --- the guards the admin panel needs, phase nine -----------------------
+    //
+    // The last-administrator refusal lives here rather than in an integration
+    // test because it turns on how many accounts hold the platform role, and the
+    // suite shares one container and one SUPER_ADMIN role: other tests'
+    // administrators are always present, so the count is never one in an IT.
+    // Here the count is a stub, which is exactly the kind of thing a unit test
+    // is for.
+
+    @Test
+    void theLastPlatformAdministratorCannotBeDeactivated() {
+        java.util.UUID roleId = java.util.UUID.randomUUID();
+        User onlyOne = withPlatformRole("admin@example.com", roleId);
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(onlyOne));
+        when(repository.countByPlatformRoleIdAndDeletedAtIsNull(roleId)).thenReturn(1L);
+
+        // An installation with no platform administrator cannot be administered,
+        // and SuperAdminBootstrap deliberately never resurrects one.
+        assertThatThrownBy(() -> service.deactivate(java.util.UUID.randomUUID()))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void theLastPlatformAdministratorCannotBeRemoved() {
+        java.util.UUID roleId = java.util.UUID.randomUUID();
+        User onlyOne = withPlatformRole("admin@example.com", roleId);
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(onlyOne));
+        when(repository.countByPlatformRoleIdAndDeletedAtIsNull(roleId)).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.softDelete(java.util.UUID.randomUUID()))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void theLastPlatformAdministratorCannotBeDemoted() {
+        java.util.UUID roleId = java.util.UUID.randomUUID();
+        User onlyOne = withPlatformRole("admin@example.com", roleId);
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(onlyOne));
+        when(repository.countByPlatformRoleIdAndDeletedAtIsNull(roleId)).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.assignPlatformRole(java.util.UUID.randomUUID(), null))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void oneOfSeveralPlatformAdministratorsMayBeDeactivated() {
+        java.util.UUID roleId = java.util.UUID.randomUUID();
+        User oneOfTwo = withPlatformRole("admin@example.com", roleId);
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(oneOfTwo));
+        when(repository.countByPlatformRoleIdAndDeletedAtIsNull(roleId)).thenReturn(2L);
+
+        // The rule is about the last one, not about administrators in general.
+        assertThat(service.deactivate(java.util.UUID.randomUUID()).status()).isEqualTo(UserStatus.DEACTIVATED);
+    }
+
+    @Test
+    void anOrdinaryAccountIsNeverCheckedAgainstTheAdministratorCount() {
+        User ordinary = active("ada@example.com");
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(ordinary));
+
+        service.deactivate(java.util.UUID.randomUUID());
+
+        // No platform role means no question to ask, and no query to pay for.
+        verify(repository, org.mockito.Mockito.never()).countByPlatformRoleIdAndDeletedAtIsNull(any());
+    }
+
+    @Test
+    void unlockingClearsBothColumnsAndSaysWhetherAnythingHappened() {
+        User locked = active("ada@example.com");
+        locked.recordFailedLogin(1, Duration.ofMinutes(15), NOW);
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(locked));
+
+        java.util.UUID actor = java.util.UUID.randomUUID();
+        service.unlock(actor, java.util.UUID.randomUUID());
+
+        assertThat(locked.getLockedUntil()).isNull();
+        assertThat(locked.getFailedLoginAttempts()).isZero();
+        verify(events).publishEvent(any(UserAdminEvents.Unlocked.class));
+    }
+
+    @Test
+    void unlockingAnAccountThatWasNotLockedAnnouncesNothing() {
+        User never = active("ada@example.com");
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(never));
+
+        service.unlock(java.util.UUID.randomUUID(), java.util.UUID.randomUUID());
+
+        // Idempotent, and silent. An audit trail with a row for every no-op is a
+        // trail nobody reads.
+        verify(events, org.mockito.Mockito.never()).publishEvent(any(UserAdminEvents.Unlocked.class));
+    }
+
+    @Test
+    void theAdministrativeProfileEditAnnouncesItselfAndTheSelfServiceOneDoesNot() {
+        User user = active("ada@example.com");
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(user));
+
+        service.updateProfile(java.util.UUID.randomUUID(), "Ada", "Byron");
+        verify(events, org.mockito.Mockito.never()).publishEvent(any(UserAdminEvents.ProfileUpdated.class));
+
+        // Two methods rather than one that decides at runtime which it was, so a
+        // person renaming themselves is never recorded as an administrative action.
+        service.updateProfileOf(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "Grace", "Hopper");
+        verify(events).publishEvent(any(UserAdminEvents.ProfileUpdated.class));
+    }
+
     private User active(String email) {
         User user = User.register(email, "hashed:right", "Ada", "Lovelace", NOW);
         user.markEmailVerified(NOW);
+        return user;
+    }
+
+    private User withPlatformRole(String email, java.util.UUID roleId) {
+        User user = active(email);
+        user.assignPlatformRole(roleId);
         return user;
     }
 }

@@ -26,4 +26,20 @@ interface AttachmentRepository extends JpaRepository<Attachment, UUID> {
     List<Attachment> findAllByTaskIdAndDeletedAtIsNull(UUID taskId);
 
     List<Attachment> findAllByProjectIdAndDeletedAtIsNull(UUID projectId);
+
+    /**
+     * How many live files there are and how much they occupy, in one row.
+     *
+     * <p>{@code coalesce} on the sum, so an installation with no attachments reads zero rather than
+     * null. A panel showing a blank where a total belongs is worse than one showing nothing stored.
+     *
+     * <p>Declared as a list of one rather than a bare {@code Object[]}: a single-result projection
+     * of several scalars is the one shape Spring Data is ambiguous about, and a list leaves nothing
+     * to interpret.
+     *
+     * @return one row of {@code [count, totalBytes]}
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT count(a), coalesce(sum(a.sizeBytes), 0) FROM Attachment a WHERE a.deletedAt IS NULL")
+    List<Object[]> countAndTotalBytes();
 }

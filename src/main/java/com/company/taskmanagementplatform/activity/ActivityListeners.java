@@ -22,6 +22,9 @@ import com.company.taskmanagementplatform.common.web.RequestIdFilter;
 import com.company.taskmanagementplatform.projects.ProjectEvents;
 import com.company.taskmanagementplatform.subtasks.SubtaskEvents;
 import com.company.taskmanagementplatform.tasks.TaskEvents;
+import com.company.taskmanagementplatform.users.UserAdminEvents;
+import com.company.taskmanagementplatform.workspaces.PlatformRoleEvents;
+import com.company.taskmanagementplatform.workspaces.RoleEvents;
 
 /**
  * Turns what the other modules announce into audit rows.
@@ -376,6 +379,159 @@ class ActivityListeners {
                 event.attachmentId(),
                 event.projectId(),
                 metadata("taskId", event.taskId(), "filename", event.filename()));
+    }
+
+    // --- administration ---------------------------------------------------
+    //
+    // The first rows in the platform written with a null workspace. An account
+    // and the platform role belong to the installation rather than to any one
+    // workspace, so there is no workspace to name, and V10 dropped the NOT NULL
+    // that used to make them impossible to record at all.
+    //
+    // This is where architecture.md's standing promise about the platform
+    // administrator - "every action it takes is audited from the phase that
+    // adds auditing" - actually falls due. Phase six could not meet it for
+    // these, because none of them had an endpoint.
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onUserProfileUpdated(UserAdminEvents.ProfileUpdated event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_PROFILE_UPDATED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                metadata("firstName", event.firstName(), "lastName", event.lastName()));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onUserActivated(UserAdminEvents.Activated event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_ACTIVATED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                metadata("status", name(event.status())));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onUserDeactivated(UserAdminEvents.Deactivated event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_DEACTIVATED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    /**
+     * The address is taken from the event rather than looked up.
+     *
+     * <p>By the time this runs the account is soft-deleted and its memberships are gone, so anything
+     * this row wants had to be read before the event was published. That ordering is the rule
+     * {@code UserAdminEvents} records, and it is the failure that would appear only for somebody who
+     * actually belonged to something.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onUserDeleted(UserAdminEvents.Deleted event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_DELETED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                metadata("email", event.email()));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onUserUnlocked(UserAdminEvents.Unlocked event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_UNLOCKED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    /** The token is not in the event and is not in the row. Only that a recovery was started. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onPasswordResetRequested(UserAdminEvents.PasswordResetRequested event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_PASSWORD_RESET_REQUESTED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onVerificationResent(UserAdminEvents.VerificationResent event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_VERIFICATION_RESENT,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onPlatformRoleGranted(PlatformRoleEvents.Granted event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.PLATFORM_ROLE_GRANTED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onPlatformRoleRevoked(PlatformRoleEvents.Revoked event) {
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.PLATFORM_ROLE_REVOKED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    /**
+     * The one administrative row that names a workspace, because a role belongs to one.
+     *
+     * <p>It therefore appears in that workspace's own history rather than in the platform trail,
+     * which is where somebody wondering why their permissions changed this morning would look.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onRolePermissionsChanged(RoleEvents.PermissionsChanged event) {
+        record(
+                event.workspaceId(),
+                event.actorUserId(),
+                ActivityActions.ROLE_PERMISSIONS_CHANGED,
+                ActivityEntityType.ROLE,
+                event.roleId(),
+                null,
+                metadata(
+                        "roleSlug",
+                        event.roleSlug(),
+                        "added",
+                        event.added().isEmpty() ? null : event.added(),
+                        "removed",
+                        event.removed().isEmpty() ? null : event.removed()));
     }
 
     // --- plumbing ---------------------------------------------------------

@@ -57,6 +57,12 @@ never be inherited from ambient state. A record belonging to a workspace the
 caller is not a member of is reported as missing rather than as forbidden,
 because a forbidden response confirms that the identifier exists.
 
+**There is exactly one carve-out**, added in phase nine: the admin panel's
+platform-scoped endpoints cross workspaces by design. They are gated on a
+platform role alone, never consult workspace membership, and never take a
+workspace identifier as an authorization input. See *Admin panel* below, which
+states the rule in full. Nothing else in the platform reads across workspaces.
+
 ## Authorization
 
 Roles are scoped to the workspace. Each workspace owns its own role rows, seeded
@@ -90,7 +96,10 @@ an attacker wants to reach. The cost of avoiding it is a standing obligation:
 the same migration.** A permission that is added without that mapping is one the
 platform administrator silently does not hold.
 
-Every action it takes is audited from the phase that adds auditing.
+Every action it takes is audited. That promise could not be met by phase six,
+which added auditing while `activity_logs` still required a workspace on every
+row; phase nine made the column nullable and recorded the platform actions it
+introduced. See *Admin panel*.
 
 Authorization has **two layers**, and both must pass.
 
@@ -855,6 +864,220 @@ dashboards would want to hear about real changes; with no cache to invalidate
 there is nothing for a listener to do. The event stays where it is, useful the
 day a cache arrives.
 
+## Admin panel
+
+Reviewed and approved. Built in phase nine.
+
+Four of the eight items the requirements name under *Admin panel* were already
+built: the account directory and its lifecycle endpoints, the role listing, the
+permission catalog, and team management. This phase built the other four and
+turned on two permissions that had been seeded and unchecked since phase two.
+
+### The `admin` module owns no table
+
+The requirements name `admin` in the module list, so the package exists. It holds
+no entity and no repository, and that is the design rather than an omission.
+
+Every table an admin panel touches already belongs to a module that enforces
+rules over it: `users` owns accounts and is the only package that may hold a
+password hash, `workspaces` owns roles and membership, and so on down. A second
+module writing those tables would be a second implementation of every rule
+protecting them. So `admin` is the platform's second composition module, after
+`reports`, and the pattern is one phase old rather than invented here.
+
+That decides where each piece lives, and the rule is worth stating because it
+looks untidy from the outside:
+
+- **System statistics and the cross-workspace listings** live in `admin`, because
+  nothing else owns them.
+- **The role editor** lives in `workspaces`, at
+  `/workspaces/{id}/roles/{slug}/permissions`, because that module owns `roles`
+  and `role_permissions`.
+- **The account verbs** live in `users` and `auth`, at `/users/{id}/...`. The two
+  recovery endpoints are in `auth` specifically: it owns the single-use tokens
+  and the session revocation, and putting them on `UserController` would make
+  `users` import `auth`, which already imports `users`.
+
+"Admin panel" is a screen in the frontend. It is assembled from endpoints that
+sit where their rules sit. Routing every administrative call through `/admin`
+would produce a module that reads seven other modules' tables, which is the one
+rule worth defending in review.
+
+### Platform scope is the carve-out to tenancy, and it is narrow
+
+*Tenancy* above says cross-workspace reads are prevented by construction and that
+the workspace comes from the request path. That holds everywhere except under
+`/admin`, which crosses workspaces by design and is the only thing in the
+platform that does.
+
+The carve-out is four rules, and a reviewer has exactly one thing to check per
+endpoint:
+
+1. Every `/admin` route is gated by `@perm.onPlatform` and nothing else. That
+   resolver reads only the caller's platform role and never consults workspace
+   membership, so administering one workspace reaches none of it however wide
+   those grants are.
+2. No `/admin` route takes a workspace identifier as an authorization input.
+   Where one appears it is a **filter** over an already-authorized platform read,
+   never a scope that widens anything.
+3. Nothing under `/admin` uses `WorkspaceAccessGuard`, whose 404-for-invisible
+   rule makes no sense for a caller who can see everything.
+4. These routes answer **403** rather than 404, unlike every workspace-scoped
+   one. That rule exists because "this workspace exists" is itself information;
+   these routes name no resource, so there is nothing to conceal and a 404 would
+   only make the API harder to use for the people entitled to it. The exception
+   is `/users/{userId}`, where a missing account is still 404.
+
+In one line: an admin endpoint is platform-scoped or it is not an admin endpoint.
+`AdminIsolationIT` walks every one of them with the widest possible workspace
+grants and asserts 403, then with a platform role and asserts 200.
+
+### Two permissions, and why each is its own
+
+Phases seven and eight both added none, on the argument that a grant every
+working role holds gates nothing and a second grant beside an existing one is a
+parallel model. Applied here that produces two rather than zero.
+
+- **`admin:read_system`** — reading across the installation. Nothing named this
+  before. It is not `workspace:read` under a second name, which at platform scope
+  means "list the workspaces" where this means "count what is inside all of
+  them"; and it is not `project:read_any`, which is workspace-scoped and which
+  three seeded roles can hold.
+- **`platform_role:assign`** — granting and revoking `SUPER_ADMIN` over HTTP,
+  which until this phase was possible only by redeploying. Deliberately not part
+  of `user:update`, so a future custom platform role can be given account
+  administration without also being given the ability to mint its own peers.
+
+Both are mapped to `SUPER_ADMIN` in `V10`, as every migration adding a permission
+must. **Neither is backfilled onto any workspace role**, which is a third answer
+to that obligation beside "backfill by slug" and "no permission at all". The
+precedent already existed: `workspace:delete` has sat in the catalog since `V3`
+mapped to the platform role and granted to no workspace role, because removing a
+workspace is platform administration. `SystemRole` is unchanged.
+
+**Two seeded permissions stop being dead constants in this phase**, and that is a
+behaviour change rather than a new feature. `role:manage` has been granted to
+`ADMIN` since phase two with nothing checking it, so a workspace administrator
+can now edit roles without any grant having changed. `user:update` is granted to
+no role at all, which is why account administration is reachable through a
+platform role alone.
+
+### The audit promise falls due here
+
+*Authorization* above says of `SUPER_ADMIN` that "every action it takes is
+audited from the phase that adds auditing". Phase six added auditing and could
+not meet that for platform actions: `activity_logs.workspace_id` was `NOT NULL`
+and no platform action happens inside a workspace. Nothing noticed, because no
+platform action had an endpoint. This phase gives it several.
+
+`V10` makes that column nullable and widens the entity-type check to add `USER`
+and `ROLE`. **One audit trail, not two.** A separate `admin_audit_logs` table
+would mean two answers to "what happened to this account", a second append-only
+trigger, and a permanent question about which to believe.
+
+A platform row carries a null workspace. The invariant that makes this safe is
+that every workspace-scoped query filters on that column, so platform rows are
+invisible to a workspace's history without one line changing, and the platform
+browse asks for `IS NULL`. Both directions are asserted, because either leak is a
+leak. A role edit is the one administrative row that *does* name a workspace,
+because a role belongs to one, so it lands in that workspace's own history, which
+is where somebody wondering why their permissions changed would look.
+
+The append-only trigger is untouched and unaffected: it is a row trigger on
+`UPDATE` and `DELETE`, so the DDL does not fire it. `AdminSchemaIT` proves that
+rather than assuming it.
+
+### The role editor replaces the whole set
+
+`PUT`, with the complete list of codes the role should hold afterwards. The
+platform made this choice once already for labels, and for the same reason: a
+delta needs the client to know the current state in order to compute it, and two
+administrators editing one role would silently merge into a set neither chose.
+
+An unknown code fails the whole request and writes nothing. An empty list is
+legal and means the role grants nothing, which is different from omitting the
+field. The audit row carries the **difference** rather than the result, because
+"what changed" is the question an audit trail answers.
+
+A platform role cannot be edited through any workspace path, and that is the
+schema's doing rather than a check: roles are looked up by `(workspaceId, slug)`,
+and a platform role has a null workspace and matches no such pair.
+
+**An edit cannot lock a workspace out of its own administration.** The service
+refuses an edit that would leave the caller's own role in that workspace without
+`role:manage`. The rule is deliberately narrow: it does not attempt the global
+"some role somewhere must retain it", which would need a holder count on every
+edit and would refuse legitimate changes to a role nobody holds. `SUPER_ADMIN` is
+unaffected because it holds no workspace role, which is correct — it is precisely
+the repair path the rule exists to avoid needing.
+
+### An administrator never learns somebody's password
+
+There is no endpoint that sets another person's password and there will not be
+one. It would put a raw credential in an administrator's request body and in
+their memory, and it would mean somebody knowing a password that opens an account
+that is not theirs.
+
+Instead an administrator **starts a recovery**: the ordinary single-use token is
+issued and mailed to the account's own address, and redeeming it revokes every
+session as any reset does. This also keeps the rule the identity phase built its
+module shape around, that `auth` never sees a password hash.
+
+The administrative entries answer 404 for an account that does not exist, where
+their public counterparts deliberately answer identically either way. The public
+ones are reachable without signing in and must not become a way to test
+addresses; these are reached only by a caller who can already list every account.
+
+### Four refusals, because an admin panel is where people break their own access
+
+Enforced in the owning service rather than in a controller, so they hold however
+the method is reached, and each answers 409 rather than 403: the caller is
+entitled to do this in general and is refused because of the state of the world.
+
+- You may not deactivate your own account.
+- You may not delete your own account.
+- You may not revoke your own platform role.
+- The last holder of `SUPER_ADMIN` may not be demoted, deactivated or deleted.
+
+The fourth matters most and nothing guarded it before. `SuperAdminBootstrap`
+creates an administrator only when none exists and explicitly never resurrects a
+deleted one, so an installation that loses its last one cannot be administered
+until somebody edits the database by hand.
+
+### The statistics, and what is deliberately not in them
+
+The requirements name "system statistics" and define nothing, so the figures are
+ours and `database.md` carries them in full beside the report definitions:
+accounts by status and how many are locked, workspaces by status, teams,
+memberships, projects and tasks by status, overdue work, attachment count and
+bytes, and a trailing window of new accounts, sign-ins and audit rows.
+
+Two things about them are worth stating.
+
+**The overdue count is measured in UTC**, unlike every other date comparison in
+the platform. Every workspace-scoped figure uses that workspace's own today; this
+one spans workspaces in different zones and there is no single today to use. It
+is said on the response rather than left to be inferred.
+
+**Nothing operational is included** — no uptime, no memory, no pool figures, no
+request rates, no error counts. Those belong to Actuator and the log platform,
+they are not database questions, and answering some of them here would be a
+second and worse monitoring surface.
+
+Nothing is cached or precomputed, following the standing decision. These are the
+platform's first queries with no tenant predicate, so that costs more here than
+it did in phase eight; the bound is that the statistics are a fixed set of
+counting queries with a capped window and that both listings page. The cost is
+recorded under *Still open*.
+
+### Nothing is published by this module and nothing is consumed
+
+`admin` has no listener, no executor, no scheduled job and no cache, and every
+method on its service is `@Transactional(readOnly = true)`. The writes the admin
+panel offers are performed by the modules that own the rows, and those publish
+their own events, which `activity` turns into audit rows exactly as it has since
+phase six.
+
 ## Identity and authentication
 
 Reviewed and approved. Built in phase two. Where the requirements document is
@@ -1090,7 +1313,7 @@ Starts alongside the identity phase.
 | 6     | Comments and mentions, attachments, activity and audit logging. **Done.** |
 | 7     | Notifications with read state, history, and the deadline scheduler. **Done.** |
 | 8     | Dashboards, reports, analytics, and the indexes they need. **Done.**    |
-| 9     | Admin panel.                                                            |
+| 9     | Admin panel. **Done.**                                                  |
 | 10    | Hardening: rate limits, headers, upload security, caching, query tuning, expired token purge. |
 | 11    | Delivery: environments, deployment, backups, end-to-end suite, docs.    |
 
@@ -1114,6 +1337,8 @@ above.
 | Blocked tasks              | **Surfaced, not enforced.** The requirements state no rule about starting or finishing blocked work. Revisit only with evidence. |
 | Task full-text search      | Deferred to hardening. `q` folds and matches the title and the rendered key; the trigram or GIN index belongs with the other query tuning. |
 | Kanban reordering          | Deferred. `board_position` exists, sorts, and is settable; gapless drag ordering is its own design. |
-| Custom workspace roles     | Deferred. Schema supports them, none are seeded.                    |
+| Custom workspace roles     | **Still deferred.** Phase nine built the editor that changes what the three seeded roles grant; creating, renaming and deleting a role are not built. Doing so needs a slug policy, a decision about the members of a deleted role, and the `default_role_id` pointer that would dangle |
 | Report caching             | **Deferred** to hardening, behind the shared cache. Phase eight computes every figure at request time and precomputes nothing, so an aggregate's cost is paid on every request. The window and page caps in `app.reports.*` bound one request; nothing bounds the rate of them. |
 | Workspace timezone validation | **Deferred** to hardening. `workspaces.timezone` is free text with a length check and nothing asserting it names a real zone. Phase eight is the first thing that reads it, and falls back to UTC with a WARN rather than failing a report. |
+| Untenanted aggregate cost  | **Deferred** to hardening, with the rest of the caching. The admin panel's statistics are the platform's only queries with no workspace predicate, so several are counts over whole tables that no index can usefully narrow. The window and page caps in `app.admin.*` bound one request; nothing bounds the rate of them, and there is no dataset here large enough to show what it costs. |
+| Audit retention            | **Deferred** to delivery, beside the backup policy. `activity_logs` is append-only and nothing prunes it, and phase nine added platform rows to it. The expired-token purge and the attachment byte purge are the same shape of open item. |

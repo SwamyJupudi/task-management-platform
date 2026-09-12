@@ -25,6 +25,8 @@ Applied so far:
 | `V8`    | `notifications`, with read state and the partial unique index the deadline scan is made idempotent by. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill: a notification has one audience, the person named in it, so there is no grant to hold |
 | `V9`    | **Indexes only.** Eight of them, for the dashboards and reports. No table, no column, no trigger, no constraint and no seed row: phase eight derives every figure from what `V3` to `V7` already store. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill, for the second time after `V8` and for a different reason: a report is computed over the caller's project read scope, and `project:read_any` already widens it, so a `report:read_any` beside it would be that grant under a second name |
 
+| `V10`   | **The admin panel.** Two permissions, `admin:read_system` and `platform_role:assign`, mapped to `SUPER_ADMIN` and **deliberately backfilled onto no workspace role**: both name platform administration, and `workspace:delete` has been the precedent for that since `V3`. Makes `activity_logs.workspace_id` **nullable** and widens its entity-type check to add `USER` and `ROLE`, so that actions taken outside any workspace can be audited at all. Two indexes. **No table and no column** |
+
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
 grants too.** Those rows were written in code when each workspace was created, so
@@ -34,6 +36,19 @@ backfills by role slug, and `WorkspaceRoleGrantsIT` holds the backfill and
 `SystemRole` together. The backfill is a no-op on a database with no workspaces
 yet, which is every test run, so the test asserts the agreement rather than the
 statement.
+
+That obligation has had **three** distinct answers, and which one applies is a
+decision rather than an oversight:
+
+- `V4` to `V7` backfilled by role slug, because the codes named work that
+  workspace roles do.
+- `V8` and `V9` added no permission at all, so there was nothing to backfill.
+- `V10` added two that **no workspace role should ever hold**. Reading across
+  every workspace, and granting somebody the platform role, are not things an
+  administrator of one workspace has any business doing, and `@perm.onPlatform`
+  never consults workspace membership anyway, so a workspace grant would gate
+  nothing while looking as though it did. `workspace:delete` has sat in the
+  catalog on exactly these terms since `V3`.
 
 `SUPER_ADMIN` is mapped explicitly rather than short-circuited in code, so that
 authorization has one implementation and not two. Every later migration that adds
@@ -245,7 +260,7 @@ The scheduled purge is hardening-phase work.
 | `comment_mentions` | Join, drives mention notifications. The pair is the primary key, so naming somebody twice in one comment is one mention. Rows are derived from the body by the server and rewritten whenever it changes |
 | `attachments`      | Records `storage_provider` and `storage_key`, so changing provider is a data migration rather than a schema one. The file itself never lives on the application server. `content_type` is what the application detected from the leading bytes; what the client claimed is not stored. Soft deleted |
 | `notifications`    | Recipient, actor (nullable, since the deadline scan is nobody), `type`, entity reference, `project_id`, `jsonb` metadata, `dedupe_key`, `read_at`. Not soft deleted. A check constraint refuses a row whose actor is its own recipient, because nobody is notified of what they just did |
-| `activity_logs`    | **Append only.** No update timestamp, no soft delete. A trigger refuses every `UPDATE` and `DELETE`, which is how `V7` enforces the requirement that audit records not be casually editable under the single database role the application currently uses. Withholding the privileges from a separate application role completes it, and is delivery-phase work |
+| `activity_logs`    | **Append only.** No update timestamp, no soft delete. A trigger refuses every `UPDATE` and `DELETE`, which is how `V7` enforces the requirement that audit records not be casually editable under the single database role the application currently uses. Withholding the privileges from a separate application role completes it, and is delivery-phase work. `workspace_id` became **nullable** in `V10`: a null means the action happened outside any workspace, which is what account and platform-role administration are |
 
 **The people columns here key to `users`, and that is the opposite of everywhere
 else.** A comment's author, an attachment's uploader, a mention's subject and an
@@ -280,6 +295,19 @@ with its own writing.
 outlives its author leaving the workspace and an audit row outlives everybody. A
 notification is a message saying "come and look at this", so leaving a workspace,
 leaving a project or losing an account removes the rows outright.
+
+**A null workspace on an audit row means the platform, and the two listings are
+disjoint by construction.** Phase nine is the first thing to record an action
+taken outside any workspace: deactivating an account, granting the platform role,
+editing somebody's profile. The invariant that makes one nullable column safe is
+that **every workspace-scoped query filters on it**, so a platform row can never
+appear in a workspace's history, and the platform browse asks for `IS NULL`, so a
+workspace row can never appear in that. Both directions are asserted, because
+either leak is a leak.
+
+A role edit is the exception that does carry a workspace, because a role belongs
+to one. Its row therefore lands in that workspace's own history, which is where
+somebody wondering why their permissions changed this morning would look.
 
 **`activity_logs.metadata` is `jsonb` rather than a column per action.** Every action
 carries different facts, and a table with a column for each would be mostly nulls and
@@ -331,6 +359,8 @@ Created with the tables that need them, not retrofitted.
 | `subtasks (workspace_id, assignee_user_id, status)` | Personal checklist load on the employee dashboard |
 | `projects (workspace_id, team_id, status)` | Team performance, which groups a workspace's projects by team |
 | `activity_logs (workspace_id, actor_user_id, created_at desc)` | One person's own recent activity. Not partial: `activity_logs` is never soft-deleted |
+| `activity_logs (created_at desc)` partial on `workspace_id IS NULL` | The platform audit browse. The workspace index above leads with `workspace_id` and cannot serve an `IS NULL` scan ordered by time; partial on the predicate, this one holds only platform rows |
+| `users (locked_until)` partial on `locked_until IS NOT NULL` | The locked-account count and the locked filter on the admin directory. One row per account that has ever been locked and still carries the timestamp |
 
 All partial on non-deleted rows where the table is soft-deletable, except the unique
 on `tasks (project_id, task_number)` and the unique on `attachments.storage_key`,
@@ -394,6 +424,45 @@ then leaves the historical bucket it was once counted in. The append-only truth
 is in `activity_logs`, but reaching completions there means filtering `jsonb`
 metadata with no index behind it, which this document defers with the rest of the
 query tuning. Revisit the two together.
+
+## Business rule: system statistics
+
+**Implemented in phase nine.** The requirements name "system statistics" under
+the admin panel and define nothing at all. These definitions are ours, they sit
+here beside the report definitions for the same reason those do, and every query
+in that phase is written against them.
+
+Every figure counts **live rows only**: a soft-deleted account, workspace, team,
+project, task or attachment is gone rather than flagged, per the convention above.
+None of them carries a workspace predicate, which is what makes them platform
+statistics and why `admin:read_system` gates them.
+
+| Figure | Definition |
+| --- | --- |
+| **accounts** | live accounts, and the split across `PENDING_VERIFICATION`, `ACTIVE` and `DEACTIVATED`, every value present including those nobody holds |
+| **locked** | live accounts whose `locked_until` is still in the future. A different fact from `DEACTIVATED`, and usually the one somebody is looking for |
+| **workspaces** | live workspaces, split `ACTIVE` and `ARCHIVED`. An archived workspace is frozen, not gone, so its contents are still counted |
+| **memberships** | every `workspace_members` row. Larger than the account count whenever anybody belongs to more than one workspace |
+| **teams, projects, tasks** | live rows across every workspace, projects and tasks each split by status with every value present |
+| **overdue** | the phase eight definition unchanged: open, dated, and that date already past. Finished work is never overdue however late it was |
+| **storage** | the count and summed `size_bytes` of live attachments |
+| **recent** | accounts created, accounts that signed in, and audit rows written, each within a trailing window capped by `app.admin.max-stats-window-days` |
+
+**The overdue count is measured in UTC, and it is the one figure in the platform
+that is not computed in a workspace's own today.** Every workspace-scoped
+comparison uses `workspaces.timezone`, as the report definitions require. This
+one spans workspaces in different zones and there is no single today to use, so
+it says so on the response rather than leaving a reader to infer it. A workspace
+that wants its own answer has the dashboard for it.
+
+**The storage figure understates what is actually stored.** A soft-deleted
+attachment keeps its object until the byte purge that does not exist yet, so the
+store is always at least this large. A figure that quietly included deleted files
+would disagree with the listing an administrator can actually see, so the gap is
+left visible rather than papered over.
+
+**Nothing operational belongs here**: no uptime, no memory, no connection-pool
+figures, no request rates, no error counts. Those are not database questions.
 
 ## Business rule: project progress
 

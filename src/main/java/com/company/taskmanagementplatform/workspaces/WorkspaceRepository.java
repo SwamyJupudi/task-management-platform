@@ -15,4 +15,14 @@ interface WorkspaceRepository extends JpaRepository<Workspace, UUID> {
     boolean existsBySlugAndDeletedAtIsNull(String slug);
 
     Page<Workspace> findAllByDeletedAtIsNull(Pageable pageable);
+
+    long countByDeletedAtIsNull();
+
+    /** Live workspaces grouped by status, for the platform statistics. Rows of {@code [status, count]}. */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT w.status, count(w) FROM Workspace w WHERE w.deletedAt IS NULL GROUP BY w.status")
+    java.util.List<Object[]> countByStatusGrouped();
+
+    /** A named set, for resolving workspace names across a page of projects in one query. */
+    java.util.List<Workspace> findAllByIdInAndDeletedAtIsNull(java.util.Collection<UUID> ids);
 }

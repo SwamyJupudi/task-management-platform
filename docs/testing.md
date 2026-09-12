@@ -36,7 +36,7 @@ their infrastructure form. The rest arrive with the code they describe.
 | Kind        | Required by                                                      | Arrives in |
 | ----------- | ---------------------------------------------------------------- | ---------- |
 | Unit        | Services, business logic, utilities, validation                  | Every phase |
-| Integration | Auth, project creation, task creation, assignment, permissions   | Phases 2-8 |
+| Integration | Auth, project creation, task creation, assignment, permissions   | Phases 2-9 |
 | Concurrency | Refresh rotation, task numbering                                 | Where a race is possible |
 | API         | Every major endpoint                                             | Phases 2-9 |
 | End to end  | Login, create project, add member, create task, assign, complete | Phase 11   |
@@ -227,6 +227,86 @@ Four existing tests pick this phase up with no edit: `ProtectedRouteMatrixIT`
 walks the new routes, `PermissionCatalogIT` stays green because no permission was
 added, `OpenApiContractIT` picks up the two new controllers, and
 `ApplicationContextIT` picks up the new beans.
+
+## The admin panel phase
+
+`AdminIsolationIT` is the one to keep honest, and its failure would be the widest
+in the suite. Every other authorization test here guards one workspace:
+`ProjectVisibilityIT` and `TaskVisibilityIT` stop somebody seeing work inside a
+workspace they belong to, `ReportVisibilityIT` stops a number computed over it.
+This one stops an administrator of one workspace reaching **every workspace in
+the installation**, and a mistake would not throw or return the wrong status. It
+would return a plausible number computed over the whole company.
+
+It walks **every** platform route rather than a sample, because a route added
+later and forgotten here is a route nothing protects, and `ProtectedRouteMatrixIT`
+only proves a route refuses an anonymous caller, not that it refuses a signed-in
+one who administers somewhere else. Every case holds the widest possible
+workspace grants and differs from the passing case only in whether the caller has
+a platform role, so nothing in it passes because of a workspace permission
+difference.
+
+`PlatformAuditIT` proves the promise this phase discharges. `architecture.md` has
+said since phase two that every action the platform administrator takes is
+audited; phase six could not meet that, because `activity_logs.workspace_id` was
+`NOT NULL` and no platform action happens inside a workspace. Nothing noticed,
+because no platform action had an endpoint. Each of the ten new actions is
+asserted to produce exactly one row with a null workspace, the right entity type,
+the right actor and the request id of the call that caused it — and the last test
+in the class asserts the append-only trigger still refuses an `UPDATE`, which is
+the half a nullability change could plausibly have broken.
+
+Its negative assertion is worth reading. Unlocking an account that was not locked
+must write nothing, and proving an absence usually means sleeping and hoping. It
+instead performs a *later* auditable action on the same account and waits for
+that row: the audit executor is a single FIFO thread by design, so once the later
+row exists any earlier one is already there. That makes the assertion
+deterministic rather than timing-dependent.
+
+`AdminSchemaIT` is written in SQL like its identity, teams, projects, tasks and
+reports counterparts, because a nullable column, a check constraint and a trigger
+are properties of the schema rather than of the service layer. It also asserts
+that neither new permission reaches any workspace role, which is the third answer
+the backfill obligation has had and the one that is easiest to get wrong by
+copying the previous migration.
+
+`AdminStatisticsIT` builds **two** workspaces, which no other test base in the
+platform does. Every figure the admin panel produces crosses workspaces, so a
+fixture confined to one would let a query that accidentally carried a tenant
+predicate pass silently: it would simply read low, and a low number is not a
+failure. Its assertions are differences across one operation rather than
+absolutes, because the container is shared and never truncated, so no test can
+know what the installation held before it started.
+
+Two rules could not be integration-tested and are pinned as unit tests instead,
+which is worth recording so nobody moves them back. The **last-administrator**
+refusal in `UserAccountServiceTest` turns on how many accounts hold the platform
+role, and the suite shares one container and one `SUPER_ADMIN` role, so other
+tests' administrators are always present and the count is never one. The **role
+diff and no-op** rules in `RolePermissionEditTest` are arithmetic over two sets.
+That class builds `Permission` rows by reflection: the entity has no public
+constructor because its rows are written by migrations, and adding a factory so a
+test could call one would put a mutator on a production entity for no production
+reason.
+
+Three existing tests pick this phase up: `ProtectedRouteMatrixIT` walks the new
+routes and gained a named check for them, `PermissionCatalogIT` enforces both
+halves of the two new permissions, and `WorkspaceRoleGrantsIT` is expected to pass
+**unchanged** — which is itself the assertion, since `SystemRole` did not move.
+
+The test profile lowers two bounds so the tests that prove those bounds exist can
+reach them: `app.admin.max-stats-window-days=40` rather than a year, and
+`app.admin.max-page-size=60` rather than a hundred.
+
+**Sixty, not twenty-five**, and the reason is the trap the reports block above
+already records, walked into a second time. The cap has to stay above the
+*largest* endpoint default, and the admin routes do not share one: the two
+listings default to twenty but the audit trail defaults to fifty, matching the
+workspace history it mirrors. With the cap at twenty-five, a request naming no
+page size at all was refused by the guard meant for requests naming a large one.
+`AdminPagingIT.aRequestNamingNoSizeAtAllIsNeverRefused` now asserts that
+invariant directly, on all three routes, so the next person to lower the cap is
+told immediately rather than by two unrelated-looking failures.
 
 ## Mail in tests
 

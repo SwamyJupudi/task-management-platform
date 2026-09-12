@@ -32,6 +32,14 @@ interface TeamRepository extends JpaRepository<Team, UUID> {
     long countByWorkspaceIdAndDeletedAtIsNull(UUID workspaceId);
 
     /**
+     * How many live teams exist anywhere, for the platform statistics.
+     *
+     * <p>The one method here that is not narrowed to a workspace. It is reached only through {@code
+     * admin:read_system}, which no workspace role can hold.
+     */
+    long countByDeletedAtIsNull();
+
+    /**
      * A named set of this workspace's live teams, for a report page that spans several.
      *
      * <p>By workspace as well as by identifier, like every other lookup here, so a team from

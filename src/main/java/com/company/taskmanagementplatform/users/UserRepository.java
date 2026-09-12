@@ -56,6 +56,66 @@ interface UserRepository extends JpaRepository<User, UUID> {
     boolean existsByPlatformRoleIdAndDeletedAtIsNull(UUID platformRoleId);
 
     /**
+     * How many live accounts hold a platform role.
+     *
+     * <p>Not the same question as the {@code exists} above, and the difference is the whole point:
+     * the admin panel has to refuse demoting, deactivating or deleting the <em>last</em> platform
+     * administrator, and an installation with none is unadministrable until somebody edits the
+     * database by hand. {@code SuperAdminBootstrap} deliberately never resurrects one.
+     */
+    long countByPlatformRoleIdAndDeletedAtIsNull(UUID platformRoleId);
+
+    /**
+     * The administrative directory, narrowed the four ways the admin panel needs.
+     *
+     * <p>Four methods rather than one with nullable parameters, for the reason the pair above
+     * already gives: a bare null in a typed position gives PostgreSQL nothing to infer from. The
+     * service picks the method, so every parameter stays typed by its use.
+     *
+     * <p>"Locked" is a live lockout rather than a lockout that has since expired, which is why the
+     * moment is a parameter rather than {@code now()} inside the query: the service already holds a
+     * clock and one request's figures should agree with each other.
+     */
+    @Query("""
+            SELECT u FROM User u
+            WHERE u.deletedAt IS NULL
+              AND u.lockedUntil IS NOT NULL AND u.lockedUntil > :now
+              AND (LOWER(u.email) LIKE :pattern
+                   OR LOWER(u.firstName) LIKE :pattern
+                   OR LOWER(u.lastName) LIKE :pattern)
+            """)
+    Page<User> searchLocked(
+            @Param("pattern") String pattern, @Param("now") java.time.Instant now, Pageable pageable);
+
+    @Query("""
+            SELECT u FROM User u
+            WHERE u.deletedAt IS NULL
+              AND u.status = :status
+              AND u.lockedUntil IS NOT NULL AND u.lockedUntil > :now
+              AND (LOWER(u.email) LIKE :pattern
+                   OR LOWER(u.firstName) LIKE :pattern
+                   OR LOWER(u.lastName) LIKE :pattern)
+            """)
+    Page<User> searchLockedByStatus(
+            @Param("pattern") String pattern,
+            @Param("status") UserStatus status,
+            @Param("now") java.time.Instant now,
+            Pageable pageable);
+
+    /** How many live accounts hold each status, in one query. Rows of {@code [status, count]}. */
+    @Query("SELECT u.status, count(u) FROM User u WHERE u.deletedAt IS NULL GROUP BY u.status")
+    List<Object[]> countByStatusGrouped();
+
+    long countByDeletedAtIsNull();
+
+    /** Live accounts whose lockout has not yet expired. */
+    long countByDeletedAtIsNullAndLockedUntilGreaterThan(java.time.Instant now);
+
+    long countByDeletedAtIsNullAndCreatedAtGreaterThanEqual(java.time.Instant since);
+
+    long countByDeletedAtIsNullAndLastLoginAtGreaterThanEqual(java.time.Instant since);
+
+    /**
      * Bulk lookup, so rendering a page of members costs one query rather than one per row. The
      * member roster is the first place that N+1 would have shown up.
      */

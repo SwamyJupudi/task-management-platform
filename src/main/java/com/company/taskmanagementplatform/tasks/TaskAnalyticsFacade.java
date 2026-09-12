@@ -327,6 +327,47 @@ public class TaskAnalyticsFacade {
                 (LocalDate) row[7]);
     }
 
+    // --- platform-wide, for the admin panel -------------------------------
+    //
+    // The only methods on this class that take no ProjectScope, because the
+    // platform statistics panel crosses every workspace by design. They are
+    // named so that reads plainly at the call site, and they are reachable only
+    // through admin:read_system, which no workspace role holds.
+
+    /**
+     * How many live tasks hold each status across every workspace.
+     *
+     * <p>Statuses with no tasks are absent, as they are on the scoped counterpart. The {@code admin}
+     * module fills the gaps, because it is the one that knows a panel needs every column.
+     */
+    @Transactional(readOnly = true)
+    public List<TaskStatusCount> countsByStatusPlatformWide() {
+        List<TaskStatusCount> counts = new ArrayList<>();
+        for (Object[] row : tasks.countByStatusPlatformWide()) {
+            counts.add(new TaskStatusCount((TaskStatus) row[0], ((Number) row[1]).longValue()));
+        }
+        return List.copyOf(counts);
+    }
+
+    @Transactional(readOnly = true)
+    public long countPlatformWide() {
+        return tasks.countByDeletedAtIsNull();
+    }
+
+    /**
+     * How much work is late across the installation.
+     *
+     * <p>The phase eight definition unchanged, reached through the same module that owns it, so
+     * "overdue" is expressed in the platform twice rather than three times.
+     *
+     * @param today the date to measure against. UTC for this figure, because it spans workspaces in
+     *     different zones and there is no single today to use
+     */
+    @Transactional(readOnly = true)
+    public long countOverduePlatformWide(LocalDate today) {
+        return tasks.countOverduePlatformWide(TaskStatus.DONE, today);
+    }
+
     /** A SQL {@code sum} over no rows is null rather than zero, and a count is never negative. */
     private static long count(Object value) {
         return value == null ? 0L : ((Number) value).longValue();

@@ -132,6 +132,32 @@ public final class Permissions {
      */
     public static final String ACTIVITY_READ = "activity:read";
 
+    /**
+     * Reading across the whole installation: platform statistics, the cross-workspace project
+     * overview, and the platform audit trail.
+     *
+     * <p>The admin panel is the one part of the platform that crosses workspaces, and this is the
+     * code that says so. It is checked with {@code @perm.onPlatform}, which never consults workspace
+     * membership, so administering one workspace can never become a way to read across all of them.
+     *
+     * <p>It is not {@link #WORKSPACE_READ} under a second name. That code at platform scope means
+     * "list the workspaces"; this one means "count what is inside all of them". It is not {@link
+     * #PROJECT_READ_ANY} either, which is workspace-scoped and which three seeded roles can hold.
+     */
+    public static final String ADMIN_READ_SYSTEM = "admin:read_system";
+
+    /**
+     * Granting and revoking the platform administrator role.
+     *
+     * <p>Deliberately its own code rather than part of {@link #USER_UPDATE}. Promoting somebody to
+     * platform administrator is the highest-privilege operation the platform has, and it must be
+     * separately nameable so a future custom platform role can be given account administration
+     * without also being given the ability to mint its own peers.
+     *
+     * <p>Like {@link #WORKSPACE_DELETE}, it is granted to no workspace role at all.
+     */
+    public static final String PLATFORM_ROLE_ASSIGN = "platform_role:assign";
+
     /** The catalog as data, for the test that compares it against the seeded rows. */
     public static final Set<String> ALL = Set.of(
             USER_READ,
@@ -178,7 +204,9 @@ public final class Permissions {
             ATTACHMENT_CREATE,
             ATTACHMENT_DELETE,
             ATTACHMENT_MANAGE_ANY,
-            ACTIVITY_READ);
+            ACTIVITY_READ,
+            ADMIN_READ_SYSTEM,
+            PLATFORM_ROLE_ASSIGN);
 
     private Permissions() {}
 }

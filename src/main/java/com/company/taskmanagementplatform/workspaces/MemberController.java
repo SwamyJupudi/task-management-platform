@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,6 +21,7 @@ import com.company.taskmanagementplatform.common.security.Permissions;
 import com.company.taskmanagementplatform.common.web.PageResponse;
 import com.company.taskmanagementplatform.workspaces.dto.ChangeMemberRoleRequest;
 import com.company.taskmanagementplatform.workspaces.dto.MemberResponse;
+import com.company.taskmanagementplatform.workspaces.dto.ReplaceRolePermissionsRequest;
 import com.company.taskmanagementplatform.workspaces.dto.RoleResponse;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -42,11 +44,17 @@ class MemberController {
 
     private final MembershipService memberships;
     private final RoleQueryService roles;
+    private final RoleAdminService roleAdmin;
     private final WorkspaceAccessGuard guard;
 
-    MemberController(MembershipService memberships, RoleQueryService roles, WorkspaceAccessGuard guard) {
+    MemberController(
+            MembershipService memberships,
+            RoleQueryService roles,
+            RoleAdminService roleAdmin,
+            WorkspaceAccessGuard guard) {
         this.memberships = memberships;
         this.roles = roles;
+        this.roleAdmin = roleAdmin;
         this.guard = guard;
     }
 
@@ -81,5 +89,33 @@ class MemberController {
     List<RoleResponse> listRoles(@PathVariable UUID workspaceId) {
         guard.requirePermission(workspaceId, Permissions.ROLE_READ);
         return roles.listWorkspaceRoles(workspaceId);
+    }
+
+    /**
+     * Replaces what a role grants. The admin panel's role editor.
+     *
+     * <p>Addressed by slug rather than identifier, matching the role change on a member just above,
+     * which also names a slug. A slug is what a client already holds from the listing.
+     *
+     * <p>{@code requirePermissionToChange} rather than {@code requirePermission}, so an archived
+     * workspace is frozen against role edits exactly as it is against every other change. Editing
+     * the permissions of a frozen workspace is a change like any other.
+     *
+     * <p>{@code role:manage} has been seeded and granted to {@code ADMIN} since phase two with
+     * nothing checking it. Turning it on here widens what a workspace administrator can do without
+     * any grant changing, which is a behaviour change rather than a new feature and is recorded as
+     * such in the README.
+     */
+    @PutMapping("/roles/{roleSlug}/permissions")
+    @Operation(
+            summary = "Replace what a role grants",
+            description = "The complete set, not a delta. Codes not listed are removed")
+    RoleResponse replaceRolePermissions(
+            @PathVariable UUID workspaceId,
+            @PathVariable String roleSlug,
+            @Valid @RequestBody ReplaceRolePermissionsRequest request) {
+
+        guard.requirePermissionToChange(workspaceId, Permissions.ROLE_MANAGE);
+        return roleAdmin.replacePermissions(workspaceId, roleSlug, request.permissions());
     }
 }

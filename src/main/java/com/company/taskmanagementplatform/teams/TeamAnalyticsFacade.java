@@ -45,6 +45,19 @@ public class TeamAnalyticsFacade {
     }
 
     /**
+     * How many live teams exist across every workspace, for the platform statistics panel.
+     *
+     * <p>The one method here with no workspace predicate, and it is deliberately a separate method
+     * rather than a nullable parameter on the one above. A query that silently counted the whole
+     * installation because somebody passed a null identifier is exactly the defect the admin panel
+     * has to be incapable of.
+     */
+    @Transactional(readOnly = true)
+    public long countTeamsPlatformWide() {
+        return teams.countByDeletedAtIsNull();
+    }
+
+    /**
      * Every live team of a workspace, with its roster size, by name.
      *
      * <p>Sizes come from one grouped query rather than a count per team, which is the shape that

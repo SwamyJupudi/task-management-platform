@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.company.taskmanagementplatform.common.error.ResourceNotFoundException;
 import com.company.taskmanagementplatform.common.security.CurrentUser;
 import com.company.taskmanagementplatform.common.web.PageResponse;
+import com.company.taskmanagementplatform.users.dto.AdminUpdateProfileRequest;
 import com.company.taskmanagementplatform.users.dto.UpdateProfileRequest;
 import com.company.taskmanagementplatform.users.dto.UserResponse;
 
@@ -53,8 +54,9 @@ class UserController {
     PageResponse<UserResponse> list(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) UserStatus status,
+            @RequestParam(required = false, defaultValue = "false") boolean locked,
             @PageableDefault(size = 20) Pageable pageable) {
-        return PageResponse.of(queries.search(search, status, pageable), UserResponse::from);
+        return PageResponse.of(queries.search(search, status, locked, pageable), UserResponse::from);
     }
 
     @GetMapping("/{userId}")
@@ -72,6 +74,40 @@ class UserController {
     UserResponse updateOwnProfile(@Valid @RequestBody UpdateProfileRequest request) {
         return UserResponse.from(
                 accounts.updateProfile(CurrentUser.requireId(), request.firstName(), request.lastName()));
+    }
+
+    /**
+     * The administrative edit of somebody else's profile.
+     *
+     * <p>Mapped after {@code /me} so the literal path wins, and routed to a different service method
+     * so that a person renaming themselves is never recorded as an administrative action.
+     *
+     * <p>{@code user:update} has been in the permission catalog since phase two with nothing checking
+     * it. This is the endpoint it was put there for. It is granted to no workspace role, so it is
+     * reachable through a platform role alone, which is deliberate: renaming somebody who may also
+     * work in three other workspaces is platform administration.
+     */
+    @PatchMapping("/{userId}")
+    @PreAuthorize("@perm.onPlatform('user:update')")
+    @Operation(
+            summary = "Edit an account's profile",
+            description = "Name only. An address is an account's identity and is not editable here")
+    UserResponse updateProfile(@PathVariable UUID userId, @Valid @RequestBody AdminUpdateProfileRequest request) {
+        return UserResponse.from(
+                accounts.updateProfileOf(CurrentUser.requireId(), userId, request.firstName(), request.lastName()));
+    }
+
+    /**
+     * Clears an automatic lockout, so somebody does not have to wait it out.
+     *
+     * <p>Idempotent. Unlocking an account that is not locked succeeds and writes no audit row,
+     * because nothing happened.
+     */
+    @PostMapping("/{userId}/unlock")
+    @PreAuthorize("@perm.onPlatform('user:update')")
+    @Operation(summary = "Clear a sign-in lockout", description = "Idempotent; an unlocked account is unchanged")
+    UserResponse unlock(@PathVariable UUID userId) {
+        return UserResponse.from(accounts.unlock(CurrentUser.requireId(), userId));
     }
 
     @PostMapping("/{userId}/deactivate")

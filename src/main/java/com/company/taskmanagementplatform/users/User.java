@@ -188,6 +188,21 @@ class User {
         lockedUntil = null;
     }
 
+    /**
+     * Clears a lockout by hand, for the administrator who does not want to make somebody wait.
+     *
+     * <p>The same two columns a successful sign-in clears, which is deliberate: an unlock is the
+     * administrator saying what a successful sign-in would have said. It is named separately from
+     * {@link #clearLock()} only so the call site reads as the verb the panel offers.
+     *
+     * @return true when there was a lockout to clear, so the caller knows whether anything happened
+     */
+    boolean unlock() {
+        boolean wasLocked = lockedUntil != null || failedLoginAttempts > 0;
+        clearLock();
+        return wasLocked;
+    }
+
     void deactivate() {
         status = UserStatus.DEACTIVATED;
     }

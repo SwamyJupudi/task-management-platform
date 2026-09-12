@@ -19,6 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.company.taskmanagementplatform.common.error.ConflictException;
 import com.company.taskmanagementplatform.common.error.ResourceNotFoundException;
+import com.company.taskmanagementplatform.common.security.AuthenticatedUser;
+import com.company.taskmanagementplatform.common.security.CurrentUser;
 import com.company.taskmanagementplatform.common.security.PasswordPolicy;
 import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.common.util.Emails;
@@ -176,11 +178,19 @@ public class UserAccountService {
     @Transactional
     public UserAccount deactivate(UUID userId) {
         User user = require(userId);
+        requireNotSelf(userId, "You cannot switch off your own account.");
+        requireNotLastPlatformAdministrator(
+                user, "This is the last platform administrator. Grant the role to somebody else first.");
+
         user.deactivate();
         // Listened for inside the same transaction by auth, which revokes the
         // sessions. Deactivating and leaving a session alive would be worse than
         // not deactivating at all.
         events.publishEvent(new UserDeactivatedEvent(userId));
+        // And after commit by activity, which writes the audit row. Two events
+        // rather than one widened event, because the two consumers need
+        // different facts at different moments.
+        events.publishEvent(new UserAdminEvents.Deactivated(actor(), userId));
         return toAccount(user);
     }
 
@@ -188,24 +198,71 @@ public class UserAccountService {
     public UserAccount activate(UUID userId) {
         User user = require(userId);
         user.activate();
+        events.publishEvent(new UserAdminEvents.Activated(actor(), userId, user.getStatus()));
         return toAccount(user);
     }
 
     @Transactional
     public void softDelete(UUID userId) {
         User user = require(userId);
+        requireNotSelf(userId, "You cannot remove your own account.");
+        requireNotLastPlatformAdministrator(
+                user, "This is the last platform administrator. Grant the role to somebody else first.");
+
+        // Read before the write and before the events. By the time the audit
+        // listener runs, this row is soft-deleted and its memberships are gone,
+        // so anything the audit row wants has to be in hand now.
+        String email = user.getEmail();
+
         user.softDelete(clock.instant());
         // Two effects, two events. Sessions end because the account can no longer
         // be used, which is also true of a deactivation. Memberships are removed
         // because the person is gone, which is not.
         events.publishEvent(new UserDeactivatedEvent(userId));
         events.publishEvent(new UserDeletedEvent(userId));
+        events.publishEvent(new UserAdminEvents.Deleted(actor(), userId, email));
     }
 
     @Transactional
     public UserAccount updateProfile(UUID userId, String firstName, String lastName) {
         User user = require(userId);
         user.updateProfile(firstName.trim(), lastName.trim());
+        return toAccount(user);
+    }
+
+    /**
+     * The administrative edit of somebody else's profile.
+     *
+     * <p>A separate method rather than a widened {@link #updateProfile}, so the self-service path
+     * keeps its shape of "you may only edit yourself" and this one is the path that publishes an
+     * audit event. One method serving both would have to decide at runtime which it was, and would
+     * record a person renaming themselves as an administrative action.
+     *
+     * <p>The address is deliberately not editable here. It is the account's identity, changing it
+     * needs re-verification, a uniqueness decision and a decision about live sessions, and the
+     * requirements ask for none of it.
+     */
+    @Transactional
+    public UserAccount updateProfileOf(UUID actorUserId, UUID targetUserId, String firstName, String lastName) {
+        User user = require(targetUserId);
+        user.updateProfile(firstName.trim(), lastName.trim());
+        events.publishEvent(new UserAdminEvents.ProfileUpdated(
+                actorUserId, targetUserId, user.getFirstName(), user.getLastName()));
+        return toAccount(user);
+    }
+
+    /**
+     * Clears an automatic lockout.
+     *
+     * <p>Idempotent: unlocking an account that is not locked succeeds and records nothing, because
+     * nothing happened. An audit trail with a row for every no-op is a trail nobody reads.
+     */
+    @Transactional
+    public UserAccount unlock(UUID actorUserId, UUID userId) {
+        User user = require(userId);
+        if (user.unlock()) {
+            events.publishEvent(new UserAdminEvents.Unlocked(actorUserId, userId));
+        }
         return toAccount(user);
     }
 
@@ -226,7 +283,15 @@ public class UserAccountService {
      */
     @Transactional
     public void assignPlatformRole(UUID userId, UUID platformRoleId) {
-        require(userId).assignPlatformRole(platformRoleId);
+        User user = require(userId);
+
+        if (platformRoleId == null) {
+            requireNotSelf(userId, "You cannot revoke your own platform administrator role.");
+            requireNotLastPlatformAdministrator(
+                    user, "This is the last platform administrator. Grant the role to somebody else first.");
+        }
+
+        user.assignPlatformRole(platformRoleId);
         users.flush();
     }
 
@@ -264,9 +329,65 @@ public class UserAccountService {
         return users.existsByPlatformRoleIdAndDeletedAtIsNull(roleId);
     }
 
+    @Transactional(readOnly = true)
+    public long countHoldersOfPlatformRole(UUID roleId) {
+        return users.countByPlatformRoleIdAndDeletedAtIsNull(roleId);
+    }
+
     private User require(UUID userId) {
         return users.findByIdAndDeletedAtIsNull(userId)
                 .orElseThrow(() -> ResourceNotFoundException.of("User", userId));
+    }
+
+    // --- the guards an admin panel needs ----------------------------------
+    //
+    // Both live here rather than in a controller, so they hold however the
+    // method is reached, including from a future caller nobody has written yet.
+    // Both answer 409 rather than 403: the caller is entitled to do this in
+    // general, and is being refused because of the state of the world.
+
+    /**
+     * Refuses an action somebody is taking on their own account.
+     *
+     * <p>Reads the caller from the security context rather than taking one, deliberately. The
+     * startup bootstrap and the test fixtures call these methods with nobody signed in, and there is
+     * genuinely no self to protect in that case.
+     */
+    private void requireNotSelf(UUID userId, String message) {
+        CurrentUser.find()
+                .map(AuthenticatedUser::id)
+                .filter(userId::equals)
+                .ifPresent(self -> {
+                    throw new ConflictException(message);
+                });
+    }
+
+    /**
+     * Refuses to remove the last platform administrator.
+     *
+     * <p>The role is read off the account rather than resolved by name, so this module does not have
+     * to know which role is the platform one; it only has to know that this person holds one and
+     * that nobody else does. That also keeps {@code users} from depending on {@code workspaces},
+     * which owns the role table and already depends on this module.
+     *
+     * <p>Worth stating why this matters more than it looks: {@code SuperAdminBootstrap} creates an
+     * administrator only when none exists and explicitly never resurrects a deleted one, so an
+     * installation that loses its last one cannot be administered until somebody edits the database
+     * by hand.
+     */
+    private void requireNotLastPlatformAdministrator(User user, String message) {
+        UUID roleId = user.getPlatformRoleId();
+        if (roleId == null) {
+            return;
+        }
+        if (users.countByPlatformRoleIdAndDeletedAtIsNull(roleId) <= 1) {
+            throw new ConflictException(message);
+        }
+    }
+
+    /** The person behind the request, or null when the platform itself is acting. */
+    private static UUID actor() {
+        return CurrentUser.find().map(AuthenticatedUser::id).orElse(null);
     }
 
     static UserAccount toAccount(User user) {
@@ -279,6 +400,7 @@ public class UserAccountService {
                 user.getEmailVerifiedAt(),
                 user.getPlatformRoleId(),
                 user.getLastLoginAt(),
+                user.getLockedUntil(),
                 user.getCreatedAt());
     }
 }

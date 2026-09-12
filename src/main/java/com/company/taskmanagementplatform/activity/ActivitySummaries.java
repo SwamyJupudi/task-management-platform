@@ -46,8 +46,45 @@ final class ActivitySummaries {
             case ActivityActions.ATTACHMENT_DELETED -> "removed " + text(metadata, "filename", "a file");
             case ActivityActions.TASK_DEPENDENCY_ADDED -> "made it wait on another task";
             case ActivityActions.TASK_DEPENDENCY_REMOVED -> "removed a dependency";
+            case ActivityActions.USER_PROFILE_UPDATED -> "edited an account's profile";
+            case ActivityActions.USER_ACTIVATED -> "switched an account back on";
+            case ActivityActions.USER_DEACTIVATED -> "switched an account off";
+            case ActivityActions.USER_DELETED -> "removed an account";
+            case ActivityActions.USER_UNLOCKED -> "unlocked an account";
+            case ActivityActions.USER_PASSWORD_RESET_REQUESTED -> "started a password recovery for an account";
+            case ActivityActions.USER_VERIFICATION_RESENT -> "sent an account another verification message";
+            case ActivityActions.PLATFORM_ROLE_GRANTED -> "granted the platform administrator role";
+            case ActivityActions.PLATFORM_ROLE_REVOKED -> "revoked the platform administrator role";
+            case ActivityActions.ROLE_PERMISSIONS_CHANGED -> changedPermissions(metadata);
             default -> fallback(action);
         };
+    }
+
+    /**
+     * How a role's grants moved, in counts rather than in codes.
+     *
+     * <p>The codes themselves are in the row's metadata for anybody who wants them. Spelling forty
+     * of them into a sentence would make a history page unreadable, and the client has the lists
+     * beside the sentence.
+     */
+    private static String changedPermissions(Map<String, Object> metadata) {
+        int added = size(metadata.get("added"));
+        int removed = size(metadata.get("removed"));
+
+        if (added > 0 && removed > 0) {
+            return "changed a role, granting " + added + " and removing " + removed;
+        }
+        if (added > 0) {
+            return "granted a role " + added + " more";
+        }
+        if (removed > 0) {
+            return "removed " + removed + " from a role";
+        }
+        return "changed a role's permissions";
+    }
+
+    private static int size(Object value) {
+        return value instanceof java.util.Collection<?> items ? items.size() : 0;
     }
 
     /** {@code task.created} becomes "created a task", which is right for nearly every action. */

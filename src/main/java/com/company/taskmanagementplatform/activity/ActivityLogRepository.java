@@ -17,7 +17,28 @@ import org.springframework.data.repository.query.Param;
  */
 interface ActivityLogRepository extends JpaRepository<ActivityLog, UUID> {
 
+    /**
+     * One workspace's history.
+     *
+     * <p>Since {@code V10} the workspace is nullable, so this method carries an invariant it did not
+     * used to need: filtering on the column is what keeps platform rows out of a workspace's
+     * history. Every workspace-scoped method here does it, and {@link
+     * #findAllByWorkspaceIdIsNullOrderByCreatedAtDesc} is the only one that asks for the other side.
+     * Neither can leak into the other, and {@code AdminActivityIT} asserts both directions.
+     */
     Page<ActivityLog> findAllByWorkspaceIdOrderByCreatedAtDesc(UUID workspaceId, Pageable pageable);
+
+    /**
+     * The platform audit trail: everything that happened outside any workspace.
+     *
+     * <p>Account administration and platform-role grants, and nothing else. A caller reaching this
+     * holds {@code admin:read_system} and {@code activity:read} on their platform role, which no
+     * workspace membership can supply.
+     */
+    Page<ActivityLog> findAllByWorkspaceIdIsNullOrderByCreatedAtDesc(Pageable pageable);
+
+    /** How many rows were written since a moment, for the platform statistics panel. */
+    long countByCreatedAtGreaterThanEqual(java.time.Instant since);
 
     Page<ActivityLog> findAllByWorkspaceIdAndProjectIdOrderByCreatedAtDesc(
             UUID workspaceId, UUID projectId, Pageable pageable);

@@ -1,0 +1,1343 @@
+================================================================================
+PHASE 9 IMPLEMENTATION PLAN - ADMIN PANEL
+================================================================================
+
+Status of this document: PLAN ONLY. No code, migration, dependency, test or
+document in the repository is changed by it. Items marked DECISION NEEDED must
+be agreed before implementation starts, exactly as architecture.md requires of
+anything marked Proposed.
+
+Prepared from: docs/project-requirements.pdf, docs/architecture.md,
+docs/database.md, docs/testing.md, README.md, phase8-plan.txt, and the phase 1-8
+source in src/main and src/test.
+
+Phase 9 in the approved build order (architecture.md): "Admin panel."
+
+
+================================================================================
+1. EXACT REQUIREMENTS IN SCOPE
+================================================================================
+
+1.1 Section 24, Admin Panel
+---------------------------
+The requirements name eight items and define none of them:
+
+  - User management
+  - Role management
+  - Permission management
+  - Team management
+  - Project overview
+  - Activity logs
+  - System statistics
+  - Account management
+
+Four of the eight are already built and are consumed rather than rebuilt. The
+accounting below is honest about the gap, so the phase is sized against what is
+missing rather than against the heading.
+
+  USER MANAGEMENT
+    Exists: GET /users (paged, searchable, status filter), GET /users/{id},
+            activate, deactivate, soft delete. All platform-scoped through
+            @perm.onPlatform.
+    Gap:    user:update is seeded and NOTHING USES IT. No way to edit another
+            person's profile, unlock a locked account, resend verification, or
+            start a password recovery for somebody. No self-harm guards.
+
+  ROLE MANAGEMENT
+    Exists: GET /workspaces/{id}/roles, read only. RoleQueryService's own
+            javadoc says "Editing the mapping from role to permission is what
+            the admin panel does, and that belongs to the phase that builds it."
+    Gap:    role:manage is seeded and NOTHING USES IT. There is no write
+            endpoint at all.
+
+  PERMISSION MANAGEMENT
+    Exists: GET /permissions, the global catalog, gated by permission:read.
+    Gap:    Nothing. The catalog is migration-owned by design and will never
+            have a write endpoint. "Permission management" is satisfied by role
+            management plus this read.
+
+  TEAM MANAGEMENT
+    Exists: Full lifecycle in the teams module, workspace-scoped, phase 3.
+    Gap:    Nothing new. The admin panel is a consumer.
+
+  PROJECT OVERVIEW
+    Exists: Project listing and the phase 8 project report, both scoped to one
+            workspace.
+    Gap:    A platform-wide overview that crosses workspaces.
+
+  ACTIVITY LOGS
+    Exists: GET /workspaces/{id}/activity, plus one project's and one task's
+            history.
+    Gap:    Platform-level actions are NOT AUDITED AT ALL today, because
+            activity_logs.workspace_id is NOT NULL. And there is no
+            cross-workspace browse.
+
+  SYSTEM STATISTICS
+    Exists: Nothing. Phase 8 named it explicitly as phase 9 work and excluded
+            it.
+    Gap:    The whole item.
+
+  ACCOUNT MANAGEMENT
+    Exists: PATCH /users/me for a person's own profile. Session listing and
+            logout.
+    Gap:    Overlaps with user management; the gap is the same list.
+
+1.2 Section 2, User Roles (the SUPER_ADMIN half)
+-------------------------------------------------
+  "Super Admin: manage entire platform, users, teams, roles & permissions,
+  projects, company-wide analytics, audit logs, system configuration."
+
+Two clauses in that sentence have no endpoint behind them today: "roles &
+permissions" has no write path, and "company-wide analytics" was deferred here
+by phase 8, whose every endpoint is scoped to one workspace.
+
+Granting the platform role itself is also code-only today.
+PlatformRoleService.assignSuperAdmin exists and is called by the startup
+bootstrap and by nothing else, so an installation cannot promote a second
+platform administrator without a redeploy.
+
+1.3 Section 17, Backend Requirements
+------------------------------------
+  - the admin module, which the requirements name and which does not exist
+  - DTO/request validation on every parameter this phase introduces
+  - authorization guards
+  - pagination, filtering, sorting on every listing
+  - API documentation
+  - unit and integration tests
+
+1.4 Section 14, Activity / Audit History
+-----------------------------------------
+  "Important actions must be recorded." Every write this phase adds is an
+  important action by definition: they are the administrative ones. See 2.4.
+
+1.5 Section 22, Security / Section 31, Performance
+----------------------------------------------------
+Access control, audit logging, and "do not fetch thousands of records
+unnecessarily". The second is sharper here than anywhere else in the platform:
+this is the first phase whose queries carry no tenant predicate.
+
+Explicitly NOT in scope for phase 9 - see section 10.
+
+
+================================================================================
+2. DESIGN DECISIONS TAKEN, AND THE REASONING
+================================================================================
+
+2.1 One module, named admin, that owns no table
+------------------------------------------------
+The requirements' backend module list names admin. It is created as
+com.company.taskmanagementplatform.admin.
+
+It owns no entity and no repository, and that is the design rather than an
+omission. Every table an admin panel touches is already owned by a module that
+enforces rules over it: users owns accounts and is the only package that may
+hold a password hash; workspaces owns roles, role_permissions and membership;
+teams, projects, tasks and activity own theirs. A second module writing those
+tables would be a second implementation of every rule protecting them.
+
+So admin is the platform's second composition module, after reports. It composes
+reads through facades and delegates writes to the owning module's application
+service. The precedent is exact and one phase old.
+
+What that means concretely:
+
+  - System statistics and the platform-wide overview live in admin, because
+    nothing owns them.
+  - The role editor lives in workspaces, beside RoleQueryService, because
+    workspaces owns roles and role_permissions. It is reached at
+    /workspaces/{workspaceId}/roles/..., not under /admin.
+  - The new account verbs (edit somebody else's profile, unlock, resend
+    verification, start a recovery) live in users and auth, beside the verbs
+    already there, and are reached at /users/..., not under /admin.
+
+"Admin panel" is a screen in the frontend. It is assembled from endpoints that
+sit where their rules sit. Routing every administrative call through /admin
+would produce a module that reads seven other modules' tables, which is the one
+rule architecture.md calls "worth defending in review".
+
+2.2 Platform scope is the module's whole identity, and the tenancy carve-out
+-----------------------------------------------------------------------------
+Architecture.md states: "Cross-workspace reads are prevented by construction.
+The workspace comes from the request path and never from a header."
+
+This phase deliberately crosses workspaces, and it is the only one that does.
+The carve-out is narrow and is written down rather than discovered:
+
+  - Every /admin/** route is gated by @perm.onPlatform(...) and nothing else.
+  - @perm.onPlatform consults the caller's PLATFORM role only. Membership of a
+    workspace is not read. An administrator of one workspace therefore reaches
+    no /admin route at all, however wide their workspace grants are. That is
+    the invariant PermissionResolverAdapter already guarantees, and this phase
+    relies on it rather than re-implementing it.
+  - No /admin route takes a workspaceId as an authorization input. Where one
+    appears it is a FILTER over an already-authorized platform-wide read, never
+    a scope that widens anything.
+  - Nothing under /admin uses WorkspaceAccessGuard, because a
+    404-for-invisible rule makes no sense for a caller who can see everything.
+
+The rule stated once: an admin endpoint is platform-scoped or it is not an
+admin endpoint. Anything narrower belongs in the module that owns the
+workspace-scoped rule.
+
+2.3 Two new permissions, and the argument for each
+---------------------------------------------------
+Phases 7 and 8 both added none, on the argument that a grant every working role
+holds gates nothing and a second grant beside an existing one is a parallel
+model. That argument applied here produces two codes rather than zero.
+
+  admin:read_system
+      Reading platform-wide figures: counts across every workspace, every
+      account, every project. Nothing today names this capability. It is not
+      workspace:read under another name, because workspace:read at platform
+      scope means "list the workspaces" and this means "count what is inside
+      all of them". It is not project:read_any either, which is a
+      WORKSPACE-scoped grant three seeded roles can hold.
+
+  platform_role:assign
+      Granting and revoking SUPER_ADMIN over HTTP. Deliberately NOT folded into
+      user:update, and deliberately not into user:activate. Promoting somebody
+      to platform administrator is the single highest-privilege operation the
+      platform has, and it must be separately nameable so a future custom
+      platform role can be given account administration without being given the
+      ability to mint peers.
+
+Both are mapped to SUPER_ADMIN in V10, as every migration adding a permission
+must. Neither is backfilled onto any workspace role, which is a third pattern
+beside V8/V9's "no permissions at all" and V4-V7's "backfill by slug". The
+precedent for it already exists: workspace:delete is in the catalog, mapped to
+SUPER_ADMIN, and granted to no workspace role, because removing a workspace is
+platform administration. These two are the same shape, and the migration says so
+in a comment rather than leaving a reader to infer it.
+
+role:manage and user:update need no migration. They are already in the catalog,
+and role:manage is already granted to ADMIN. This phase is where both stop being
+dead constants. See DECISION 3 for user:update, which is granted to nobody.
+
+2.4 Platform actions must be audited, and today they cannot be
+----------------------------------------------------------------
+This is the sharpest constraint in the phase, and it is a schema fact rather
+than an opinion.
+
+  activity_logs.workspace_id  uuid NOT NULL REFERENCES workspaces (id)
+  CONSTRAINT activity_logs_entity_type_check
+      CHECK (entity_type IN ('WORKSPACE','TEAM','PROJECT','TASK','SUBTASK',
+                             'COMMENT','ATTACHMENT'))
+
+Deactivating an account, granting SUPER_ADMIN, editing somebody's profile and
+deleting a workspace all happen outside any workspace. None of them can be
+written to that table as it stands, and none of them is audited today.
+
+Architecture.md makes a standing promise about exactly this, in the
+authorization section: of SUPER_ADMIN, "Every action it takes is audited from
+the phase that adds auditing." Phase 6 added auditing and did not meet the
+promise for platform actions, because no platform action had an endpoint worth
+auditing yet. Phase 9 gives it several, so phase 9 is where the promise falls
+due.
+
+Decision: V10 makes workspace_id nullable and widens the entity_type check to
+add USER and ROLE. One audit trail, not two.
+
+  - A platform row carries workspace_id = NULL and entity_type USER, ROLE or
+    WORKSPACE. Every existing query filters by workspace_id, so platform rows
+    are invisible to workspace browsing without one line changing.
+  - The platform browse reads WHERE workspace_id IS NULL.
+  - The ON DELETE CASCADE stays for rows that do have a workspace.
+  - The append-only trigger is a BEFORE UPDATE OR DELETE row trigger. It does
+    not fire on ALTER TABLE, so dropping NOT NULL and swapping the check
+    constraint are ordinary DDL.
+
+The alternative, a separate admin_audit_logs table, was rejected: it would mean
+two answers to "what happened", a second append-only trigger, a second reader,
+and a permanent question about which one an auditor should believe.
+
+2.5 The role editor replaces the whole set
+--------------------------------------------
+PUT, not PATCH, and the body carries the complete list of permission codes the
+role should hold afterwards. The platform already made this choice once, for
+labels: architecture.md records that "a labels list on an edit replaces the
+whole set". A grant editor taking add/remove deltas would need the client to
+know the current state in order to compute them, and two administrators editing
+the same role would silently merge into a set neither of them chose.
+
+Consequences, all deliberate:
+
+  - The response is the role as it now stands, so a client never has to guess.
+  - An unknown code is 400 for the whole request. Nothing is written.
+  - The audit row carries the codes added and the codes removed, computed by
+    the service from the difference, so the trail says what changed rather than
+    what the final state was.
+
+2.6 A role editor must not be able to lock a workspace out of itself
+----------------------------------------------------------------------
+If a workspace administrator removes role:manage from ADMIN, and they hold no
+other role, that workspace can never edit its roles again. Only SUPER_ADMIN
+could repair it, and an installation may reasonably not want to call the
+platform administrator to undo a typo.
+
+Decision: the service refuses an edit whose result would leave the caller's own
+role in that workspace without role:manage. The rule is narrow, it is
+explainable in one sentence in an error message, and it does not attempt the
+much harder global rule "some role somewhere must retain it", which would need
+to count holders and would refuse legitimate edits to a role nobody holds.
+
+SUPER_ADMIN is unaffected: it edits through its platform role and holds no
+workspace role, so "the caller's own role in that workspace" is absent and the
+rule does not apply. That is correct, because SUPER_ADMIN is precisely the
+repair path. See DECISION 4 for the alternative.
+
+2.7 An administrator never learns somebody's password
+-------------------------------------------------------
+"Account management" invites an endpoint that sets another person's password.
+There will not be one.
+
+Starting a recovery for somebody is offered instead: it issues the ordinary
+single-use reset token through the existing PasswordService path and mails it to
+the account's own address. The administrator learns nothing, the token goes to
+the person who owns the address, and the flow that already revokes every session
+on reset is reused rather than reimplemented.
+
+This also keeps the rule the identity phase built its module shape around: auth
+never sees a password hash, and users is the only package that holds one. An
+admin-set-password endpoint would put a raw password in an administrator's
+request body, in a log if anything ever logged a body, and in their memory.
+
+2.8 The self-harm guards, stated once
+---------------------------------------
+An admin panel is where somebody removes their own access by accident. Four
+refusals, all new, all in the owning service rather than the controller so they
+hold however the method is reached:
+
+  - You may not deactivate your own account.
+  - You may not soft-delete your own account.
+  - You may not revoke your own platform role.
+  - The last holder of SUPER_ADMIN may not be demoted, deactivated or deleted.
+
+The fourth matters most and nothing in the platform guards it today.
+SuperAdminBootstrap only creates an administrator when none exists and
+explicitly "never resurrects a deleted administrator", so an installation that
+loses its last platform administrator is unadministrable until somebody edits
+the database by hand.
+
+2.9 System statistics are defined here, because the requirements define nothing
+--------------------------------------------------------------------------------
+Phase 8 set the precedent: name the figures, define them in database.md beside
+the progress rule, and write every query against those definitions. The same is
+done here. The figures, and only these:
+
+  accounts      total, and the split by status (ACTIVE, PENDING_VERIFICATION,
+                DEACTIVATED); plus how many are currently locked, which is a
+                different fact from DEACTIVATED and is usually the one an
+                administrator is actually looking for
+  workspaces    total live, split ACTIVE and ARCHIVED
+  teams         total live across every workspace
+  projects      total live, split by status
+  tasks         total live, split by status, plus how many are overdue
+  attachments   count and total bytes, the only storage figure the platform can
+                produce without asking a provider
+  audit         rows written in the trailing window
+  recent        accounts created, and accounts that signed in, in the window
+
+"Live" means not soft-deleted, everywhere, per the existing convention. The
+trailing window is app.admin.stats-window-days, defaulting to 30.
+
+"Overdue" reuses the phase 8 definition exactly, through TaskAnalyticsFacade, so
+there is no third expression of it. Note this figure is computed in UTC rather
+than per workspace, because a platform-wide count spans workspaces in different
+zones and there is no single "today" to use. That is stated in the response
+documentation rather than quietly assumed, and it is the one figure in the
+platform not computed in a workspace's own time.
+
+Deliberately absent: uptime, memory, connection-pool figures, request rates and
+error counts. Those belong to Actuator and the log platform, they are not
+database questions, and a statistics endpoint answering some of them would be a
+second, worse monitoring surface. Sections 21 and 31 are served by the
+observability built in phase 1.
+
+2.10 Nothing is cached, and nothing is precomputed
+----------------------------------------------------
+Same standing decision as phase 8, same reasoning, and it bites harder here
+because these are the platform's first queries with no tenant predicate. The
+bound is instead that the statistics endpoint is a fixed set of counting queries
+with no client-supplied range other than the window, and that window is capped.
+Recorded as RISK 2 rather than solved.
+
+2.11 Custom workspace roles stay deferred
+-------------------------------------------
+Architecture.md lists them under Still open: "Deferred. Schema supports them,
+none are seeded." Creating one brings a slug policy, a uniqueness rule, a
+decision about what happens to members of a role that is deleted, and the
+default_role_id pointer that would dangle. Phase 9 edits the grants of the three
+seeded roles and creates none. See DECISION 5.
+
+
+================================================================================
+3. DATABASE CHANGES AND MIGRATIONS
+================================================================================
+
+One migration, V10__admin.sql. It is the first migration since V7 to change an
+existing table, and it changes exactly one.
+
+3.1 Permissions
+---------------
+Two rows, in the shape V4 to V7 established:
+
+  INSERT INTO permissions (code, resource, action, description) VALUES
+      ('admin:read_system',    'admin',         'read_system', ...),
+      ('platform_role:assign', 'platform_role', 'assign',      ...);
+
+Note the code-composition check on the table: code = resource || ':' || action.
+platform_role:assign satisfies it with resource 'platform_role'.
+
+Then the SUPER_ADMIN mapping, which is the standing obligation:
+
+  INSERT INTO role_permissions (role_id, permission_id)
+  SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+  WHERE r.slug = 'SUPER_ADMIN' AND r.scope = 'PLATFORM'
+    AND p.code IN ('admin:read_system', 'platform_role:assign');
+
+And then, deliberately, no workspace backfill, with a comment saying so and why:
+both codes name platform administration, no workspace role should hold either,
+and workspace:delete is the existing precedent for a catalog row that reaches no
+workspace role. WorkspaceRoleGrantsIT stays green because SystemRole does not
+change.
+
+3.2 activity_logs
+------------------
+  ALTER TABLE activity_logs ALTER COLUMN workspace_id DROP NOT NULL;
+
+  ALTER TABLE activity_logs DROP CONSTRAINT activity_logs_entity_type_check;
+  ALTER TABLE activity_logs ADD CONSTRAINT activity_logs_entity_type_check
+      CHECK (entity_type IN ('WORKSPACE','TEAM','PROJECT','TASK','SUBTASK',
+                             'COMMENT','ATTACHMENT','USER','ROLE'));
+
+Dropping NOT NULL is a catalogue update with no table rewrite. The check is
+dropped and recreated rather than widened in place, because PostgreSQL has no
+ALTER CONSTRAINT for a check predicate; the recreation validates existing rows,
+which is a scan the table can afford at this stage and which is honest about
+what it is doing. A NOT VALID plus VALIDATE pair is the alternative if the table
+is ever large at deployment time, and is noted in the migration comment rather
+than used now.
+
+The append-only trigger is untouched and unaffected: it is BEFORE UPDATE OR
+DELETE FOR EACH ROW, so DDL does not fire it.
+
+3.3 Indexes
+------------
+Three, each justified by a query this phase actually writes. Phase 8's rule
+applies: shipping an index nothing queries is worse than not shipping one.
+
+  activity_logs (created_at DESC) WHERE workspace_id IS NULL
+      The platform audit browse. activity_logs_workspace_created_idx leads with
+      workspace_id and cannot serve an IS NULL scan ordered by time without
+      reading every platform row; partial on the predicate, this one holds only
+      them.
+
+  users (status) WHERE deleted_at IS NULL
+      The account status breakdown, which is a GROUP BY over the whole table
+      with no other predicate. This is the one figure where an index changes the
+      plan from a heap scan to an index-only scan. It also serves the existing
+      status filter on GET /users, which has nothing behind it today.
+
+  users (locked_until) WHERE locked_until IS NOT NULL
+      The locked-account count and the locked-account filter. Very small: one
+      row per account that has ever been locked and still carries the timestamp.
+
+Deliberately NOT added: an index per count(*) on projects, tasks, teams and
+attachments. A count over a whole table with no predicate cannot be usefully
+narrowed by an index, and the partial deleted_at IS NULL indexes those tables
+already carry are what the planner will reach for if it reaches for anything.
+More would be indexes nothing queries. RISK 2 records the consequence.
+
+3.4 What V10 does NOT do
+--------------------------
+No new table. No new column. No trigger. No seed row beyond the two permissions
+and their SUPER_ADMIN mapping. No workspace backfill. The admin panel is
+composition plus four account verbs, and composition needs no storage.
+
+
+================================================================================
+4. MODULES AND CLASSES TO ADD OR MODIFY
+================================================================================
+
+4.1 New package: com.company.taskmanagementplatform.admin
+-----------------------------------------------------------
+  AdminStatisticsController      Package-private, @RestController, mapped at
+                                 ${app.api.base-path}/admin. Two endpoints:
+                                 system statistics and the platform activity
+                                 browse. @PreAuthorize on each; no guard class,
+                                 because platform scope has no 404 rule to
+                                 express.
+
+  AdminOverviewController        Package-private. The platform-wide project
+                                 overview and the platform-wide account
+                                 listing enriched with workspace membership
+                                 counts. Split from the above by subject rather
+                                 than by audience, because they page and filter
+                                 and the statistics endpoint does neither.
+
+  AdminService                   The composition. Every method
+                                 @Transactional(readOnly = true), so one
+                                 response's panels agree with each other, which
+                                 is the property phase 8 established and which a
+                                 statistics page needs more than a dashboard
+                                 does. Calls facades only; imports no entity and
+                                 no repository.
+
+  AdminProperties                @ConfigurationProperties(prefix = "app.admin").
+                                 statsWindowDays (default 30), maxPageSize
+                                 (default 100).
+
+  AdminConfig                    @EnableConfigurationProperties. No executor, no
+                                 scheduler, no listener, no cache, matching
+                                 ReportConfig and for the same reason: the
+                                 absence is worth stating where a reader would
+                                 look for it.
+
+  AdminSorts                     The sort allowlist for the two listings,
+                                 modelled on ReportSorts, including the same
+                                 page-size cap behaviour (refuse rather than
+                                 clamp).
+
+  dto/SystemStatisticsResponse   The figures of 2.9, as nested records:
+                                 AccountStats, WorkspaceStats, WorkStats,
+                                 StorageStats, RecentStats.
+  dto/PlatformProjectResponse    One project with its workspace name.
+  dto/PlatformAccountResponse    One account with its workspace count and
+                                 platform role slug.
+
+4.2 Facades to ADD on existing modules (read-only, non-authorizing)
+--------------------------------------------------------------------
+Each follows TeamAnalyticsFacade and TaskAnalyticsFacade exactly: a @Service in
+the owning package, every method @Transactional(readOnly = true), returning
+value records and never an entity.
+
+  users/UserAdminFacade
+      countByStatus()                  grouped count, live rows only
+      countLocked(Instant now)         locked_until in the future
+      countCreatedSince(Instant)       new accounts in the window
+      countSignedInSince(Instant)      last_login_at in the window
+      countTotal()
+
+  workspaces/WorkspaceAdminFacade
+      countWorkspacesByStatus()        live rows, grouped
+      countMembershipsByUserIds(ids)   how many workspaces each account is in,
+                                       one grouped query for a whole page
+      countMembersTotal()
+
+  teams/TeamAnalyticsFacade            EXTEND, do not add a second facade
+      countTeamsPlatformWide()
+
+  projects/ProjectAdminFacade
+      countByStatusPlatformWide()
+      findAllPlatformWide(filter, pageable)   the overview listing, filtered by
+                                              workspaceId, status, ownerUserId
+
+  tasks/TaskAnalyticsFacade            EXTEND
+      countByStatusPlatformWide()
+      countOverduePlatformWide(LocalDate todayUtc)   reuses the phase 8 overdue
+                                                     predicate, so the rule is
+                                                     expressed twice in the
+                                                     platform and not three
+                                                     times
+
+  attachments/AttachmentAdminFacade
+      countAndTotalBytes()             one row, count and coalesced sum
+
+  activity/ActivityService             EXTEND (it is already public)
+      forPlatform(Pageable)            workspace_id IS NULL, newest first
+      countSince(Instant)              audit rows written in the window
+
+4.3 Services and controllers to MODIFY
+----------------------------------------
+  users/UserAccountService
+      + updateProfileOf(UUID actorId, UUID targetId, first, last)
+          The administrative edit. Separate method rather than a widened
+          updateProfile, so the self-service path keeps its "you may only edit
+          yourself" shape and the administrative one is the method that
+          publishes an audit event.
+      + unlock(UUID userId)
+          Clears failed_login_attempts and locked_until. User already has the
+          private state and the clearing logic inside recordSuccessfulLogin; a
+          package-private User.unlock() is extracted from it rather than
+          duplicated.
+      ~ deactivate / softDelete
+          Gain the self-harm guards of 2.8 and the last-administrator guard.
+      + publishes the new platform audit events (4.5).
+
+  users/UserQueryService
+      ~ search(...) gains an optional "locked" filter and an optional
+        platformRoleOnly filter. Two more repository methods rather than
+        nullable parameters, following the comment already in UserRepository
+        explaining why that repository has two search methods and not one.
+
+  users/UserController
+      + PATCH /users/{userId}                @perm.onPlatform('user:update')
+      + POST  /users/{userId}/unlock         @perm.onPlatform('user:update')
+      + POST  /users/{userId}/resend-verification
+      + POST  /users/{userId}/password-reset
+      + PUT   /users/{userId}/platform-role  @perm.onPlatform('platform_role:assign')
+      + DELETE /users/{userId}/platform-role
+      New request DTOs: AdminUpdateProfileRequest.
+
+  workspaces/PlatformRoleService
+      + revokeSuperAdmin(UUID userId)
+      ~ assignSuperAdmin gains the audit event and the guards. It keeps taking
+        no role identifier, which is the property the class exists for.
+
+  workspaces/RoleAdminService            NEW class in the workspaces package
+      replacePermissions(workspaceId, roleSlug, codes, actorId) -> RoleResponse
+      Validates every code against the catalog, computes added/removed, writes
+      role_permissions, refuses the lockout of 2.6, publishes the audit event.
+      Separate from RoleQueryService for the reason UserQueryService is separate
+      from UserAccountService: one reads and pages, the other writes and
+      publishes.
+
+  workspaces/MemberController
+      + PUT /workspaces/{workspaceId}/roles/{roleSlug}/permissions
+        Guarded by WorkspaceAccessGuard.requirePermissionToChange with
+        role:manage, so an archived workspace is frozen against role edits like
+        everything else.
+      New request DTO: ReplaceRolePermissionsRequest.
+
+  workspaces/RolePermissionRepository
+      + deleteByIdRoleId(UUID roleId)   for the replace
+
+  auth/PasswordService
+      + requestResetFor(UUID userId)    the administrative entry to the existing
+                                        flow. Does not answer differently for a
+                                        missing account, because the caller here
+                                        is authorized and 404 is the honest
+                                        answer; the enumeration-resistant
+                                        variant stays on the public endpoint.
+
+  auth/RegistrationService
+      + resendVerificationFor(UUID userId)   same shape, same reasoning.
+
+  activity/ActivityEntityType
+      + USER, ROLE     matching the widened check constraint.
+
+  activity/ActivityActions
+      + user.profile_updated, user.activated, user.deactivated, user.deleted,
+        user.unlocked, user.password_reset_requested,
+        user.verification_resent, platform_role.granted,
+        platform_role.revoked, role.permissions_changed
+
+  activity/ActivityListeners and ActivityRecorder
+      ~ accept a null workspaceId. ActivityRecorder needs no change beyond the
+        entity type; ActivityListeners gains handlers for the new events.
+
+  activity/ActivityController
+      No change. The platform browse lives in AdminStatisticsController, because
+      its gate is platform-scoped and every method on ActivityController is
+      workspace-scoped. Putting it there would mean one controller with two
+      authorization models.
+
+  activity/ActivitySummaries
+      ~ renders sentences for the new actions, in the existing style.
+
+  common/security/Permissions
+      + ADMIN_READ_SYSTEM, PLATFORM_ROLE_ASSIGN, and both added to ALL.
+
+  workspaces/SystemRole
+      NO CHANGE. Neither new code reaches a workspace role.
+
+4.4 New events
+---------------
+Published by the owning service, consumed by activity only, following the
+existing cross-module rule that a module publishes and never calls activity.
+
+  users/UserAdminEvents         ProfileUpdated, Activated, Deactivated, Deleted,
+                                Unlocked, PasswordResetRequested,
+                                VerificationResent
+  workspaces/PlatformRoleEvents Granted, Revoked
+  workspaces/RoleEvents         PermissionsChanged
+
+Each carries the actor, the subject, the moment, the request id, and the facts
+that changed. UserDeactivatedEvent and UserDeletedEvent already exist and are
+consumed by auth and workspaces for session revocation and membership cleanup;
+they are left exactly as they are, and the new audit events are published beside
+them rather than by widening them. Two consumers with different needs on one
+event is how an event grows fields nobody uses.
+
+
+================================================================================
+5. APIs
+================================================================================
+
+Every route is authenticated. Every listing pages, filters and sorts within an
+allowlist. Every response uses the existing PageResponse shape and the existing
+error body.
+
+5.1 Platform administration (new, under /admin)
+------------------------------------------------
+  GET /api/v1/admin/statistics
+      admin:read_system
+      No parameters except an optional windowDays, capped by
+      app.admin.stats-window-days as its default and by a hard maximum.
+      Returns SystemStatisticsResponse. Not paged: it is a fixed panel set.
+
+  GET /api/v1/admin/activity
+      admin:read_system AND activity:read
+      Both, not either. The first says the caller may look across the
+      installation; the second says they may read an audit trail at all. A
+      caller holding only the first should not obtain audit rows.
+      Paged, newest first. Optional filters: actorUserId, action, entityType,
+      from, to.
+      Returns the platform rows (workspace_id IS NULL) only. Workspace audit
+      stays where it is.
+
+  GET /api/v1/admin/projects
+      admin:read_system AND project:read_any is NOT required and NOT consulted;
+      this is a platform read and project:read_any is workspace-scoped.
+      Paged. Filters: workspaceId, status, ownerUserId, teamId.
+      Sorts: name, status, progress, createdAt, workspaceName.
+      Returns PlatformProjectResponse, each carrying its workspace name resolved
+      through one bulk lookup for the page.
+
+  GET /api/v1/admin/accounts
+      user:read
+      The directory already exists at GET /users and is not duplicated. This one
+      adds what the admin panel needs and the directory should not carry: how
+      many workspaces each account belongs to, and its platform role slug.
+      Paged, same search and status filters, plus locked and platformRoleOnly.
+
+5.2 Account administration (added to the existing /users controller)
+---------------------------------------------------------------------
+  PATCH  /api/v1/users/{userId}                     user:update
+         Body: firstName, lastName. Nothing else. An address change is not
+         offered, because an address is the account's identity and changing it
+         would need re-verification, a uniqueness check and a session decision.
+         Recorded in section 10.
+
+  POST   /api/v1/users/{userId}/unlock              user:update
+         204. Idempotent: unlocking an unlocked account succeeds and writes no
+         audit row, because nothing happened.
+
+  POST   /api/v1/users/{userId}/resend-verification user:update
+         204. 409 if the address is already verified.
+
+  POST   /api/v1/users/{userId}/password-reset      user:update
+         204. Issues the single-use token and mails it to the account's own
+         address. The response carries nothing.
+
+  PUT    /api/v1/users/{userId}/platform-role       platform_role:assign
+         Body is empty. Like PlatformRoleService.assignSuperAdmin, the endpoint
+         cannot name a role, so no caller can name the wrong one. 200 with the
+         account.
+
+  DELETE /api/v1/users/{userId}/platform-role       platform_role:assign
+         204. Refused for the last holder, and for yourself.
+
+5.3 Role administration (added to the existing workspace controller)
+----------------------------------------------------------------------
+  PUT /api/v1/workspaces/{workspaceId}/roles/{roleSlug}/permissions
+      role:manage, through WorkspaceAccessGuard.requirePermissionToChange
+      Body: { "permissions": ["task:read", "task:create", ...] }
+      200 with the RoleResponse as it now stands.
+
+      Addressed by slug rather than by identifier, matching the existing
+      PATCH /workspaces/{id}/members/{userId} which takes a role slug in its
+      body. A slug is stable across workspaces and is what a client already
+      holds from the roles listing.
+
+5.4 What is NOT added
+----------------------
+No POST /roles, no DELETE /roles (custom roles, DECISION 5). No write endpoint
+on /permissions, ever: the catalog is migration data, and an endpoint that
+created a permission row would create a code nothing in the application checks.
+No admin endpoints for teams or projects beyond the read overview; those modules
+already have full lifecycles and a platform administrator reaches them through
+the ordinary workspace routes by virtue of holding every permission.
+
+
+================================================================================
+6. AUTHORIZATION RULES
+================================================================================
+
+6.1 The matrix
+---------------
+  ENDPOINT GROUP                 PERMISSION                SCOPE      REFUSES
+  ------------------------------ ------------------------- ---------- ---------
+  /admin/statistics              admin:read_system         PLATFORM   403
+  /admin/activity                admin:read_system +       PLATFORM   403
+                                 activity:read
+  /admin/projects                admin:read_system         PLATFORM   403
+  /admin/accounts                user:read                 PLATFORM   403
+  PATCH /users/{id}              user:update               PLATFORM   403
+  /users/{id}/unlock             user:update               PLATFORM   403
+  /users/{id}/resend-verification user:update              PLATFORM   403
+  /users/{id}/password-reset     user:update               PLATFORM   403
+  /users/{id}/platform-role      platform_role:assign      PLATFORM   403
+  PUT .../roles/{slug}/permissions role:manage             WORKSPACE  404/403/409
+
+6.2 Why /admin answers 403 and not 404
+----------------------------------------
+The 404-for-invisible rule exists because "this workspace exists" is itself
+information an outsider should not obtain. /admin/statistics names no resource.
+There is nothing to conceal the existence of, so an ordinary 403 is the honest
+answer and a 404 would only make the API harder to use for the people entitled
+to it.
+
+The one exception is /users/{userId}: an account that does not exist, or that
+has been soft-deleted, answers 404, exactly as GET /users/{userId} already does.
+
+6.3 Why a workspace administrator reaches none of it
+------------------------------------------------------
+@perm.onPlatform resolves only the caller's platform role and never consults
+workspace membership. A workspace ADMIN holds user:read, role:manage and
+activity:read inside their workspace and holds nothing at platform scope, so
+every /admin route and every platform /users route answers 403 for them. This is
+the existing guarantee and the phase adds no code to it; AdminIsolationIT is
+what proves it did not quietly change.
+
+6.4 The role editor's three-stage gate
+----------------------------------------
+Unchanged from every other workspace-scoped write:
+
+  1. WorkspaceAccessGuard.visiblePermissions -> 404 if the caller has no
+     relationship with the workspace at all.
+  2. role:manage absent -> 403.
+  3. The workspace is archived -> 409. Editing the roles of a frozen workspace
+     is a change like any other.
+
+Then two rules of the editor's own:
+
+  4. The role must belong to this workspace. A platform role has a null
+     workspace and cannot be found by (workspaceId, slug), so SUPER_ADMIN is
+     not editable through any workspace path. That is the schema's guarantee,
+     not a service check, and it is the same one that stops a member being given
+     a platform role.
+  5. The lockout refusal of 2.6 -> 409.
+
+6.5 The four self-harm guards
+-------------------------------
+Enforced in UserAccountService and PlatformRoleService, never in a controller,
+so an internal caller cannot route around them. Each answers 409 with a message
+written for the person reading it, because each is a conflict with the state of
+the world rather than a permission failure.
+
+
+================================================================================
+7. VALIDATION AND ERROR HANDLING
+================================================================================
+
+The platform contract is unchanged: one body shape, one handler, deliberate
+errors extend ApplicationException, everything else is a defect and returns the
+generic message. Nothing in this phase adds an exception type.
+
+7.1 Request validation
+-----------------------
+  AdminUpdateProfileRequest       firstName and lastName @NotBlank, @Size, the
+                                  same bounds the existing UpdateProfileRequest
+                                  carries. Reused constants rather than retyped
+                                  numbers.
+  ReplaceRolePermissionsRequest   permissions @NotNull, @Size(max = 200) on the
+                                  list, each element @NotBlank and bounded. An
+                                  empty list is VALID and means "this role
+                                  grants nothing", which is a legitimate thing
+                                  to want and is distinct from omitting the
+                                  field.
+  windowDays                      @Min(1), @Max bounded by
+                                  app.admin.max-stats-window-days. Over it is
+                                  400, refused rather than clamped, for the
+                                  reason ReportProperties already gives about
+                                  a clamped page breaking a client's own
+                                  arithmetic.
+  page size                       capped at app.admin.max-page-size, refused
+                                  over it, through AdminSorts, exactly as
+                                  ReportSorts does.
+  sort fields                     allowlisted. A field outside the list is 400
+                                  naming the allowed set, never a 500 from
+                                  Spring Data trying to resolve a property.
+  from / to                       an inverted range is 400. A range wider than
+                                  the maximum is 400.
+
+7.2 Domain errors
+------------------
+  404  an account, workspace or role that does not exist or is soft-deleted
+  409  deactivating or deleting yourself
+  409  revoking your own platform role
+  409  demoting, deactivating or deleting the last platform administrator
+  409  resending verification for an already-verified address
+  409  an archived workspace, on the role editor
+  409  a role edit that would leave the caller's own role without role:manage
+  400  a permission code that is not in the catalog, naming the unknown codes
+  400  a role slug that names a role of another workspace (surfaced as 404, see
+       6.4, because the lookup is by pair and finds nothing)
+
+7.3 What is never returned
+----------------------------
+No password hash, no token, no stack trace, no SQL, no internal identifier of a
+row the caller may not see. The statistics endpoint returns counts and never the
+rows behind them, which is worth stating because a count is a safe disclosure to
+a platform administrator and the rows would be a much larger one to anybody who
+reached the endpoint by mistake.
+
+7.4 Logging
+------------
+Every administrative write logs at INFO with the actor, the subject and the
+action, and the correlation id already on every line ties it to the audit row
+through request_id. Nothing logs a password, a token or an address; the subject
+is identified by its UUID.
+
+
+================================================================================
+8. EVENTS AND ASYNC BEHAVIOUR
+================================================================================
+
+8.1 What is published
+----------------------
+Ten new application events (4.4), all published inside the writing transaction
+by the module that owns the row, all consumed by activity after commit on its
+own thread, exactly as every mutation since phase 6 does. No module imports
+activity, and activity imports no module's entity.
+
+8.2 What is consumed
+---------------------
+Nothing new. The admin module listens for nothing. It has no listener, no
+executor, no scheduled job, no advisory lock and no thread, and every service
+method on AdminService is @Transactional(readOnly = true).
+
+8.3 The one ordering rule
+--------------------------
+UserAccountService.softDelete already publishes UserDeactivatedEvent and
+UserDeletedEvent, consumed inside the transaction by auth (revoke sessions) and
+workspaces (remove memberships). The new UserAdminEvents.Deleted is published
+beside them and is consumed after commit by activity. The audit row must
+therefore not depend on membership rows that the in-transaction listeners have
+already deleted: it carries the facts it needs as event fields, resolved before
+publication. This is the same rule NotificationListeners already follows and it
+is worth restating because it is the failure that appears only when the person
+being removed happened to belong to something.
+
+8.4 Deactivation still ends sessions immediately
+--------------------------------------------------
+Unchanged and worth confirming: there is no permission cache anywhere, so a
+revoked platform role, an edited role and a deactivated account all take effect
+on the next request, on every instance, with nothing to invalidate. A role edit
+made through the new editor is live for every holder of that role at once. That
+is the phase's strongest argument for the standing no-cache decision, and it is
+the property that would be lost first if caching arrived without care.
+
+
+================================================================================
+9. TESTS
+================================================================================
+
+9.1 Unit
+---------
+  AdminStatisticsTest         The arithmetic of composing facade answers into
+                              the response, with empty and zero cases: a
+                              platform with no workspaces reads zeros rather
+                              than nulls, and a percentage with an empty
+                              denominator reads zero.
+  RolePermissionDiffTest      The added/removed computation behind the audit
+                              row, including a no-op edit producing an empty
+                              diff and, therefore, no audit row.
+  RoleLockoutRuleTest         The 2.6 refusal: refused when the caller's own
+                              role loses role:manage, allowed when a different
+                              role does, allowed when the caller holds no
+                              workspace role (the SUPER_ADMIN case).
+  AdminSortsTest              Allowlist and page cap, mirroring ReportSortsTest.
+  UserAccountServiceTest      EXTEND with the four self-harm guards.
+
+9.2 Integration
+----------------
+  AdminIsolationIT            The one to keep honest, and the reason is the
+                              same one ProjectVisibilityIT and ReportVisibilityIT
+                              each give one level down. This phase is the only
+                              one that crosses workspaces, so a mistake here
+                              does not fail loudly: it hands an installation's
+                              shape to somebody who administers one workspace.
+                              It walks EVERY /admin route and every new platform
+                              /users route with a workspace ADMIN, a TEAM_LEAD
+                              and an EMPLOYEE of a workspace that has data, and
+                              asserts 403 on all of them. Then it does the same
+                              with SUPER_ADMIN and asserts 200. Identical
+                              workspace permissions throughout; only the
+                              platform role differs.
+
+  AdminStatisticsIT           Every figure of 2.9 against a fixture of known
+                              shape spanning TWO workspaces, so a figure that
+                              accidentally carried a tenant predicate reads low
+                              and is caught. Includes: a soft-deleted account,
+                              workspace, project and task each leave their
+                              count; an archived workspace is counted as
+                              archived and its contents still counted; the
+                              window figures move when the window does.
+
+  AdminActivityIT             The platform browse returns platform rows and NOT
+                              workspace rows, and the workspace browse returns
+                              workspace rows and NOT platform ones. Both
+                              directions, because either leak is a leak.
+
+  PlatformAuditIT             The promise of 2.4, end to end. Each of the ten
+                              new actions produces exactly one audit row with a
+                              null workspace, the right entity type, the right
+                              actor and the request id of the call that caused
+                              it. Also that the append-only trigger still
+                              refuses an UPDATE on one of those rows, which is
+                              the half a nullability change could plausibly have
+                              broken.
+
+  RoleAdministrationIT        The editor: replace grants, an unknown code
+                              refused whole, an empty list accepted, the diff in
+                              the audit row, the archived workspace refused, a
+                              role of another workspace not found, SUPER_ADMIN
+                              unreachable through any workspace path.
+
+  RoleLockoutIT               The 2.6 refusal against real permission
+                              resolution, plus the case that matters: after an
+                              admin narrows the EMPLOYEE role, an employee's
+                              very next request is refused with no restart and
+                              no cache flush.
+
+  AccountAdministrationIT     Edit somebody's profile, unlock, resend
+                              verification, start a recovery. The recovery case
+                              reads the token out of RecordingMailSender and
+                              completes the reset, proving the administrative
+                              entry reaches the same flow the public one does
+                              and that every session is revoked.
+
+  PlatformRoleAssignmentIT    EXTEND the existing class rather than adding
+                              another. Grant over HTTP, revoke, the last-holder
+                              refusal, the revoke-yourself refusal, and that a
+                              granted administrator's next request already
+                              reaches /admin.
+
+  AdminPagingIT               The two listings page, sort by each allowlisted
+                              field, refuse a field outside it, refuse a page
+                              over the cap, and refuse an inverted or oversized
+                              window.
+
+  AdminSchemaIT               Written in SQL, like its identity, teams,
+                              projects, tasks and reports counterparts. Asserts
+                              that activity_logs.workspace_id is nullable, that
+                              the widened check accepts USER and ROLE and still
+                              refuses an invented value, that a row with a null
+                              workspace can be inserted and still cannot be
+                              updated, and that the three V10 indexes exist with
+                              their partial predicates.
+
+9.3 Tests that pick this phase up, or that must be kept green
+---------------------------------------------------------------
+  ProtectedRouteMatrixIT   Every new route joins automatically. It also has four
+                           "the X routes are among the ones scanned" tests; a
+                           fifth for the admin routes should be added in the
+                           same style, because a route the sweep never walks is
+                           a route it never protected.
+  PermissionCatalogIT      MUST be updated in the same commit as V10 and
+                           Permissions.ALL. It asserts the constants and the
+                           rows agree AND that SUPER_ADMIN is mapped to every
+                           permission. Two new codes break it in both directions
+                           if either half is forgotten, which is the point.
+  WorkspaceRoleGrantsIT    Expected to pass UNCHANGED, and that is the
+                           assertion: SystemRole does not change, so no
+                           workspace role gains either code, so there is nothing
+                           to backfill.
+  SystemRoleTest           Unchanged.
+  OpenApiContractIT        Picks up the new controllers.
+  ApplicationContextIT     Picks up the new beans.
+  ActivityRecordingIT      Must still pass with a nullable column; its rows all
+                           carry a workspace.
+
+9.4 Test configuration
+-----------------------
+  application-test.properties gains:
+      app.admin.stats-window-days=7     so a window test needs a week of data
+      app.admin.max-stats-window-days=30
+      app.admin.max-page-size=25        above the endpoints' default page size
+                                        of twenty, for the reason the reports
+                                        block in that file already records
+
+  A small AdminFixtures helper builds a second workspace with its own teams,
+  projects and tasks, which is what AdminStatisticsIT and AdminIsolationIT both
+  need and what nothing existing provides. It builds through the services, with
+  one exception inherited from phase 8: a figure dated by completed_at or
+  last_login_at is set in SQL, because those columns are written from
+  Instant.now() rather than from an injected Clock. The exception is confined to
+  that helper and documented there, exactly as ReportTrendsIT's is.
+
+
+================================================================================
+10. OUT OF SCOPE
+================================================================================
+
+Named here so none of it is discovered later as a gap.
+
+  - The frontend admin panel. No screens, no tables, no permission-matrix
+    editor component. The requirements' feature folders belong to the frontend
+    track that runs alongside these phases.
+  - Custom workspace roles: creating, renaming or deleting a role. Deferred,
+    unchanged, and recorded under Still open in architecture.md. See DECISION 5.
+  - Writing to the permission catalog. Permanently out of scope: a code that no
+    annotation checks is a grant that means nothing.
+  - Changing somebody's email address. It is the account's identity and
+    changing it needs re-verification, a uniqueness decision and a session
+    decision. Not asked for by the requirements.
+  - Setting somebody's password directly. See 2.7.
+  - Impersonation, "log in as this user", and support sessions. Not asked for,
+    and it would need its own audit model and its own token type.
+  - Bulk operations: bulk deactivate, bulk role change, bulk invite, CSV import.
+  - Export of any kind, matching phase 8's decision and for the same reasons.
+  - Platform-level configuration through the API. app.* properties stay
+    environment-driven, per section 27 of the requirements. A settings table
+    editable at runtime is a different feature with a different risk profile.
+  - Cross-workspace search. The admin listings filter; they do not search
+    across every entity.
+  - Retention, archival or purging of audit rows. The expired-token purge and
+    the attachment byte purge both remain hardening work, and audit retention is
+    delivery work alongside backup policy.
+  - Caching of any admin figure. Hardening, behind the shared cache.
+  - The separate migration role and the REVOKE that completes the audit rule.
+    Delivery phase, unchanged, and this phase's nullability change does not
+    touch it.
+  - Rate limiting, secure headers, upload security, the storage provider, full
+    text search and Kanban reordering. All unchanged and all still recorded
+    under Still open in architecture.md.
+
+
+================================================================================
+11. RISKS
+================================================================================
+
+RISK 1 - This is the first phase that can leak an entire installation
+    Every other phase's worst authorization bug exposes one workspace. A missing
+    or wrong @perm.onPlatform here exposes all of them, and it does so with a
+    200 and a plausible-looking number.
+    Mitigation: AdminIsolationIT walks every route rather than a sample;
+    ProtectedRouteMatrixIT catches an unannotated one; the rule of 2.2 means a
+    reviewer has exactly one thing to check per endpoint.
+
+RISK 2 - Untenanted aggregates, untested at volume
+    The statistics endpoint is the platform's first set of queries with no
+    workspace predicate. Several are counts over whole tables. There is no
+    dataset in this repository large enough to show what that costs, and the
+    first evidence will be production.
+    Mitigation: the figures are a fixed set rather than a client-shaped query;
+    the window is capped; the listings page. The answer when evidence arrives is
+    the shared cache the hardening phase owns, not a rollup table added now.
+    This is the same trade phase 8 recorded, one level wider.
+
+RISK 3 - A schema change to a table with an append-only trigger
+    V10 alters activity_logs, which is the one table the platform guarantees
+    cannot be modified. The trigger is a row trigger on UPDATE and DELETE so DDL
+    is unaffected, but this needs to be true rather than believed.
+    Mitigation: AdminSchemaIT asserts the trigger still refuses an UPDATE after
+    the migration, including on a row with a null workspace.
+
+RISK 4 - The nullable workspace could hide platform rows from the wrong reader,
+    or show them to one
+    Every existing audit query filters by workspace_id and so excludes platform
+    rows by construction. That is correct today and is an invariant nothing
+    currently states. A future query written with a nullable column in mind
+    could include them.
+    Mitigation: AdminActivityIT asserts both directions; the ActivityLogRepository
+    javadoc records the invariant beside the methods it applies to.
+
+RISK 5 - Granting SUPER_ADMIN over HTTP
+    The platform's highest privilege becomes reachable by request rather than
+    only by deployment. That is the point of the feature, and it is still the
+    largest new attack surface in the phase.
+    Mitigation: its own permission code, held by one role; an empty request body
+    so no role can be named; an audit row that cannot be edited or deleted; and
+    the last-holder and self-revoke refusals. The residual risk is that a
+    compromised SUPER_ADMIN session can now mint peers, which is true of any
+    administrative system and which the audit trail is the answer to.
+
+RISK 6 - Role editing can surprise people who are working
+    A grant removed from EMPLOYEE takes effect on every employee's next request,
+    mid-task, with no warning. That is correct and is the no-cache decision
+    paying off, but it will read as a bug the first time somebody does it.
+    Mitigation: the response returns the role as it now stands; the audit row
+    names the codes removed; the lockout rule stops the worst case. A
+    confirmation step belongs in the frontend, not the API.
+
+RISK 7 - Two seeded permissions have been dead since phase 2
+    role:manage and user:update have existed in the catalog and been granted
+    (role:manage to ADMIN) with nothing checking them. Turning them on widens
+    what a workspace ADMIN can do without any migration or grant change, which
+    is invisible in a diff of SystemRole. A workspace administrator who could
+    not edit roles yesterday can today.
+    Mitigation: state it plainly in the phase's documentation and in the release
+    note. This is a behaviour change, not a new feature, and it is the kind that
+    surprises an operator.
+    See DECISION 3 for user:update, which is granted to NO role and therefore
+    reachable only by SUPER_ADMIN unless that is changed deliberately.
+
+RISK 8 - Facade count, again
+    Four new facades and two extended ones, plus a dozen repository methods, to
+    keep the module boundary intact. Same trade phase 8 made and same
+    observation: the phase looks wide rather than deep, and a reviewer should
+    expect that.
+
+
+================================================================================
+12. DECISIONS NEEDED BEFORE IMPLEMENTATION
+================================================================================
+
+DECISION 1 - The two new permissions
+    RECOMMENDED: add admin:read_system and platform_role:assign, mapped to
+    SUPER_ADMIN, backfilled to no workspace role (2.3).
+    ALTERNATIVE A: add neither, and gate the admin surfaces on existing
+    platform codes (workspace:read for statistics, user:update for the platform
+    role). Zero migration risk, and it makes "grant somebody SUPER_ADMIN" and
+    "fix somebody's surname" the same capability, which is wrong.
+    ALTERNATIVE B: add one combined admin:manage. Fewer rows, and it merges the
+    highest-privilege write in the platform with a read.
+    IMPACT: V10, Permissions.ALL, PermissionCatalogIT.
+
+DECISION 2 - Making activity_logs.workspace_id nullable
+    RECOMMENDED: yes, plus USER and ROLE in the entity-type check (2.4). One
+    audit trail.
+    ALTERNATIVE: a separate admin_audit_logs table with its own append-only
+    trigger. No change to an existing table, and two permanent answers to "what
+    happened to this account".
+    THIRD OPTION, NOT RECOMMENDED: do not audit platform actions this phase.
+    This leaves architecture.md's promise about SUPER_ADMIN unmet in the phase
+    that makes platform actions routine.
+    IMPACT: V10, ActivityEntityType, ActivityListeners, AdminSchemaIT.
+
+DECISION 3 - Who holds user:update
+    It is in the catalog and granted to NO role, including ADMIN. As it stands,
+    the new account-administration endpoints are reachable by SUPER_ADMIN alone,
+    because @perm.onPlatform reads only the platform role.
+    RECOMMENDED: leave it as it is. Editing anybody's account is platform
+    administration, the endpoints are platform-scoped, and a workspace
+    administrator has no business renaming a person who also works elsewhere.
+    ALTERNATIVE: this is a question about whether the admin panel is a platform
+    tool or a per-workspace one. If the answer is per-workspace, a second set of
+    workspace-scoped account endpoints is needed and this phase roughly doubles.
+    THIS IS THE DECISION MOST LIKELY TO CHANGE THE SIZE OF THE PHASE.
+
+DECISION 4 - The role-editor lockout rule
+    RECOMMENDED: refuse an edit that would leave the caller's own role without
+    role:manage (2.6).
+    ALTERNATIVE A: no rule at all. Simpler, and a workspace can lock itself out
+    with one request, recoverable only by the platform administrator.
+    ALTERNATIVE B: the global rule, that at least one role in the workspace must
+    retain role:manage. Stronger, and it refuses edits to roles nobody holds and
+    needs a holder count on every edit.
+
+DECISION 5 - Custom workspace roles
+    RECOMMENDED: stay deferred. Phase 9 edits the grants of the three seeded
+    roles and creates none.
+    ALTERNATIVE: build them now, since "Role management" is in the requirements
+    and the schema already supports them. Cost: a slug policy, a uniqueness
+    rule, what happens to the members of a deleted role, the default_role_id
+    pointer, and is_system enforcement. Roughly one third again on this phase.
+
+DECISION 6 - Statistics in UTC
+    RECOMMENDED: the platform-wide overdue count and the trailing windows are
+    computed in UTC, and the response says so (2.9). A platform figure spans
+    workspaces in different zones and there is no single "today".
+    ALTERNATIVE: compute per workspace and sum. Correct to the letter, needs one
+    query per workspace or a join to workspaces.timezone in the aggregate, and
+    produces a number nobody can reconcile against any single workspace's own
+    dashboard anyway.
+
+DECISION 7 - Where the platform audit browse lives
+    RECOMMENDED: GET /admin/activity, in the admin module (4.3). Its gate is
+    platform-scoped and every existing method on ActivityController is
+    workspace-scoped.
+    ALTERNATIVE: GET /activity on ActivityController. One controller for the
+    audit trail, and two authorization models inside it.
+
+
+================================================================================
+13. DOCUMENTATION TO BE UPDATED
+================================================================================
+
+  docs/architecture.md
+      New section "Admin panel" after "Dashboards and reports", covering: the
+      admin module that owns no table and why; the tenancy carve-out of 2.2
+      stated as a rule; the two permissions and the argument for each; the
+      nullable workspace on activity_logs and the promise it discharges; the
+      replace-whole-set editor; the lockout rule; the four self-harm guards;
+      why no admin-set-password endpoint exists.
+      Tenancy section: a pointer to the carve-out, so the "prevented by
+      construction" sentence is not read as absolute.
+      Authorization section: note that the SUPER_ADMIN auditing promise is met
+      as of this phase.
+      Build order table: phase 9 marked Done.
+      Still open table: custom workspace roles updated to say the editor exists
+      and creation does not; a new row for audit retention; a new row for
+      untenanted aggregate cost.
+
+  docs/database.md
+      Applied-migrations table: a V10 row stating that it adds two permissions
+      mapped to SUPER_ADMIN with deliberately no workspace backfill, makes
+      activity_logs.workspace_id nullable, widens the entity-type check, and
+      adds three indexes.
+      The activity_logs row in the collaboration table: amend to say a null
+      workspace means a platform action.
+      Planned-indexes table: the three new entries.
+      A new business-rule section "System statistics" beside the report
+      definitions, giving the figures of 2.9 in the same style, including that
+      they are computed in UTC and why.
+      The backfill paragraph: add the third pattern, a permission mapped to
+      SUPER_ADMIN and to no workspace role, with workspace:delete named as its
+      precedent.
+
+  docs/testing.md
+      An "admin panel phase" section naming AdminIsolationIT as the one to keep
+      honest and saying why it is a wider failure than its predecessors,
+      PlatformAuditIT as the proof of the phase's central schema change, and
+      AdminSchemaIT's SQL.
+      Coverage table: API tests now say phases 2-9; integration 2-9.
+
+  README.md
+      Project status table: phase 9 Done.
+      A "What the admin panel phase delivers" section in the voice of the
+      existing ones, and a "What it deliberately does not deliver" covering
+      custom roles, impersonation, bulk operations, export, runtime
+      configuration and email changes.
+      A release note for RISK 7: role:manage and user:update stop being dead
+      constants, so a workspace administrator's reach changes without any grant
+      changing.
+
+  .env.example
+      The three app.admin.* keys with their reasoning comments, in the existing
+      style.
+
+  OpenAPI
+      Generated from the annotations; nothing hand-maintained.
+
+
+================================================================================
+14. IMPLEMENTATION ORDER
+================================================================================
+
+  1. V10__admin.sql and AdminSchemaIT. The migration first, because everything
+     else depends on the nullable column and the two permission rows, and
+     because PermissionCatalogIT will be red until Permissions.ALL catches up.
+  2. Permissions constants, ActivityEntityType, ActivityActions,
+     ActivitySummaries, and PermissionCatalogIT green again. The vocabulary
+     before anything uses it.
+  3. The new events, ActivityListeners, and PlatformAuditIT for the first one.
+     The audit path proven before ten writers depend on it.
+  4. users and auth: the four account verbs, the self-harm guards, the
+     UserAccountServiceTest additions and AccountAdministrationIT.
+  5. PlatformRoleService.revoke, the two endpoints, and the
+     PlatformRoleAssignmentIT additions.
+  6. workspaces: RoleAdminService, the editor endpoint, RolePermissionDiffTest,
+     RoleLockoutRuleTest, RoleAdministrationIT and RoleLockoutIT.
+  7. The six facades, with the unit-level assertions their arithmetic needs.
+  8. AdminService, the two controllers, AdminStatisticsTest, AdminStatisticsIT,
+     AdminActivityIT and AdminPagingIT.
+  9. AdminIsolationIT, and the ProtectedRouteMatrixIT addition. Written last on
+     purpose, against finished endpoints, so they test the thing rather than the
+     plan.
+ 10. Documentation.
+ 11. ./mvnw spotless:apply, then ./mvnw verify.
+
+Steps 4 to 6 modify existing services in phases 2 and 3. That is unavoidable:
+the account verbs and the role editor belong to the modules that own those
+tables, and putting them anywhere else would break the rule this phase is
+otherwise careful to keep. Every change there is additive except the two
+lifecycle methods that gain guards, and those are behaviour changes that
+UserAccountServiceTest pins.
+
+================================================================================
+END OF PLAN
+================================================================================

@@ -33,6 +33,19 @@ interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember, UUID>
     List<Object[]> countByWorkspaceIdGroupedByRole(
             @org.springframework.data.repository.query.Param("workspaceId") UUID workspaceId);
 
+    /**
+     * How many workspaces each of these people belongs to, in one query.
+     *
+     * <p>For the administrative account listing, which shows it beside each row. One grouped query
+     * for the page rather than one per row, which is how every listing in this platform is written.
+     *
+     * @return rows of {@code [userId, count]}
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT m.userId, count(m) FROM WorkspaceMember m WHERE m.userId IN :userIds GROUP BY m.userId")
+    List<Object[]> countByUserIdsGrouped(
+            @org.springframework.data.repository.query.Param("userIds") java.util.Collection<UUID> userIds);
+
     /** Used when an account is removed, so no roster is left holding a row for somebody gone. */
     long deleteAllByUserId(UUID userId);
 }

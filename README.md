@@ -5,11 +5,12 @@ workflows, and reporting. Requirements live in
 [`docs/project-requirements.pdf`](docs/project-requirements.pdf), which is the
 source of truth for scope.
 
-**Current state: collaboration phase.** The shared infrastructure is in place, and
+**Current state: admin panel phase.** The shared infrastructure is in place, and
 so are accounts, authentication, role-based authorization scoped to a workspace,
 workspace settings and lifecycle, teams, projects, tasks with their subtasks and
-dependencies, and now comments, mentions, attachments and the audit trail.
-Notifications do not exist yet. See [Project status](#project-status).
+dependencies, comments, mentions, attachments, the audit trail, notifications
+with their deadline scan, dashboards and reports, and now the admin panel. What
+remains is hardening and delivery. See [Project status](#project-status).
 
 ---
 
@@ -156,7 +157,7 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 6     | Comments, mentions, attachments, activity | Done        |
 | 7     | Notifications                             | Done        |
 | 8     | Dashboards and reports                    | Done        |
-| 9     | Admin panel                               | Not started |
+| 9     | Admin panel                               | Done        |
 | 10    | Hardening                                 | Not started |
 | 11    | Delivery: environments, deployment, docs  | Not started |
 
@@ -330,7 +331,70 @@ others are written down in [`docs/database.md`](docs/database.md), because a
 dashboard count and the list it links to disagreeing by one row is the worst kind
 of defect a reporting feature can ship.
 
-### What it deliberately does not deliver
+### What the admin panel phase delivers
+
+- **System statistics across every workspace**: accounts by status and how many
+  are locked out, workspaces, teams, memberships, projects and tasks by status,
+  overdue work, attachment count and bytes, and a trailing window of new
+  accounts, sign-ins and audit entries.
+- **A cross-workspace project overview and account directory**, each paged,
+  filtered and sorted within an allowlist.
+- **A role editor.** An administrator can change what a role grants, and the
+  change takes effect on every holder's next request.
+- **Four account verbs**: edit somebody's profile, clear a sign-in lockout, start
+  a password recovery, and send another verification message.
+- **Granting and revoking the platform administrator role over HTTP.** Until now
+  that was possible only by redeploying.
+- **A platform audit trail.** Every administrative action is recorded, including
+  the ones that happen outside any workspace, which could not be recorded at all
+  before this phase.
+
+**Administering one workspace is not administering the installation.** The admin
+panel is the only part of the platform that reads across workspaces, and every
+one of its endpoints is gated on a platform role alone. Workspace membership is
+never consulted, so an administrator holding every permission in their own
+workspace reaches none of it. One test walks every such route with exactly those
+grants and asserts it is refused.
+
+**An administrator never learns anybody's password.** There is no endpoint that
+sets one. Starting a recovery issues the ordinary single-use token and mails it
+to the account's own address, and redeeming it ends every session.
+
+**You cannot remove your own access, and the last platform administrator cannot
+be removed at all.** Deactivating or deleting your own account, and revoking your
+own platform role, are refused; so is demoting, deactivating or deleting the only
+account that holds it. An installation with no platform administrator cannot be
+administered until somebody edits the database by hand.
+
+**A release note.** Two permissions that have been seeded since phase two stop
+being dead constants here, which changes behaviour without any grant changing.
+`role:manage` was already granted to the workspace `Admin` role, so a workspace
+administrator can now edit roles. `user:update` is granted to no role, which is
+why account administration needs a platform role.
+
+### What the admin panel deliberately does not deliver
+
+Custom workspace roles. The editor changes what the three seeded roles grant;
+creating, renaming and deleting a role are still deferred, because each needs a
+slug policy, a decision about the members of a removed role, and the default-role
+pointer that would dangle.
+
+No writes to the permission catalog, ever. Its rows are written by migrations,
+and an endpoint that created one would create a code nothing in the application
+checks.
+
+No impersonation, no "sign in as this user", no bulk operations, and no export.
+No changing somebody's email address, which is the account's identity and would
+need re-verification and a decision about live sessions. No runtime configuration
+through the API: environment variables stay the contract.
+
+Nothing here is cached either. These are the platform's only queries with no
+workspace predicate, so several are counts over whole tables; the window and page
+caps bound one request and nothing bounds the rate of them. That, and the fact
+that nothing prunes the audit trail, are recorded under *Still open* in
+[`docs/architecture.md`](docs/architecture.md) rather than left to be discovered.
+
+### What the reporting phase deliberately does not deliver
 
 Email notifications, which the requirements call advanced and optional. Nothing
 is pushed either: delivery is polling, and server-sent events are a later swap

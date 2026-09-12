@@ -2,6 +2,7 @@ package com.company.taskmanagementplatform.workspaces;
 
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,16 +28,49 @@ public class PlatformRoleService {
 
     private final RoleRepository roles;
     private final UserAccountService users;
+    private final ApplicationEventPublisher events;
 
-    PlatformRoleService(RoleRepository roles, UserAccountService users) {
+    PlatformRoleService(RoleRepository roles, UserAccountService users, ApplicationEventPublisher events) {
         this.roles = roles;
         this.users = users;
+        this.events = events;
     }
 
     /** Grants the platform administrator role. The only supported way to populate the column. */
     @Transactional
     public void assignSuperAdmin(UUID userId) {
         users.assignPlatformRole(userId, superAdminRoleId());
+        events.publishEvent(new PlatformRoleEvents.Granted(actor(), userId));
+    }
+
+    /**
+     * Takes the platform administrator role away.
+     *
+     * <p>Takes no role identifier either, for the same reason {@link #assignSuperAdmin} does not:
+     * there is one platform role, and a method that could name one could name the wrong one.
+     *
+     * <p>Two refusals live in {@code UserAccountService} rather than here, so they hold however the
+     * column is written: you may not revoke your own, and the last holder may not be demoted. An
+     * installation with no platform administrator cannot be administered at all, and the startup
+     * bootstrap deliberately never resurrects one.
+     */
+    @Transactional
+    public void revokeSuperAdmin(UUID userId) {
+        users.assignPlatformRole(userId, null);
+        events.publishEvent(new PlatformRoleEvents.Revoked(actor(), userId));
+    }
+
+    /**
+     * The person behind the request, or null when the platform itself is acting.
+     *
+     * <p>{@code SuperAdminBootstrap} grants the role at startup with nobody signed in, and that
+     * grant is as worth recording as any other. The audit trail already renders a null actor as "The
+     * platform".
+     */
+    private static UUID actor() {
+        return com.company.taskmanagementplatform.common.security.CurrentUser.find()
+                .map(com.company.taskmanagementplatform.common.security.AuthenticatedUser::id)
+                .orElse(null);
     }
 
     /**

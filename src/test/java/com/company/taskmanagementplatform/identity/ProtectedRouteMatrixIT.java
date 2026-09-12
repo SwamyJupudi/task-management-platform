@@ -148,6 +148,29 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
                         "DELETE /api/v1/workspaces/{workspaceId}/projects/{projectId}/owner");
     }
 
+    @Test
+    void theAdminPanelRoutesAreAmongTheOnesScanned() {
+        // These matter more than most. They are the only routes in the platform
+        // that cross workspaces, so one left open would expose the whole
+        // installation rather than one workspace. A route the sweep never walks is
+        // a route it never protected.
+        List<String> mapped = mappedRoutes().stream().map(Route::describe).toList();
+
+        assertThat(mapped)
+                .contains(
+                        "GET /api/v1/admin/statistics",
+                        "GET /api/v1/admin/activity",
+                        "GET /api/v1/admin/projects",
+                        "GET /api/v1/admin/accounts",
+                        "PATCH /api/v1/users/{userId}",
+                        "POST /api/v1/users/{userId}/unlock",
+                        "POST /api/v1/users/{userId}/password-reset",
+                        "POST /api/v1/users/{userId}/resend-verification",
+                        "PUT /api/v1/users/{userId}/platform-role",
+                        "DELETE /api/v1/users/{userId}/platform-role",
+                        "PUT /api/v1/workspaces/{workspaceId}/roles/{roleSlug}/permissions");
+    }
+
     private boolean respondsToAnonymous(Route route) {
         try {
             int status = mockMvc.perform(MockMvcRequestBuilders.request(route.method(), route.probeUri()))

@@ -10,6 +10,7 @@ import com.company.taskmanagementplatform.common.error.UnauthorizedException;
 import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.users.UserAccount;
 import com.company.taskmanagementplatform.users.UserAccountService;
+import com.company.taskmanagementplatform.users.UserAdminEvents;
 
 /**
  * Changing a password from inside a session, and recovering one from outside.
@@ -54,6 +55,35 @@ public class PasswordService {
                     tokens.issue(account.id(), UserTokenType.PASSWORD_RESET, tokenProperties.passwordResetTtl());
             events.publishEvent(new IdentityMailEvents.PasswordResetRequested(account.email(), rawToken));
         });
+    }
+
+    /**
+     * Starts a recovery on somebody else's behalf, for the admin panel.
+     *
+     * <p>The same flow, entered from a different door. The token is issued to the account and mailed
+     * to <strong>its own address</strong>, so the administrator learns nothing and the person who
+     * owns the address is the only one who can complete it. Redeeming it revokes every session, as
+     * any reset does.
+     *
+     * <p><strong>There is deliberately no endpoint that sets somebody's password.</strong> One would
+     * put a raw password in an administrator's request body, and it would mean an administrator
+     * knowing a credential that opens an account that is not theirs. This is what the requirements'
+     * "account management" is served by instead.
+     *
+     * <p>Unlike {@link #requestReset}, this answers 404 for an account that does not exist. That one
+     * is reachable without signing in and must not become a way to test whether an address is
+     * registered; this one is reached only by a caller who already holds {@code user:update} on a
+     * platform role and can list every account anyway, so an honest answer costs nothing.
+     */
+    @Transactional
+    public void requestResetFor(UUID actorUserId, UUID userId) {
+        UserAccount account = users.findById(userId)
+                .orElseThrow(() -> com.company.taskmanagementplatform.common.error.ResourceNotFoundException.of(
+                        "User", userId));
+
+        String rawToken = tokens.issue(account.id(), UserTokenType.PASSWORD_RESET, tokenProperties.passwordResetTtl());
+        events.publishEvent(new IdentityMailEvents.PasswordResetRequested(account.email(), rawToken));
+        events.publishEvent(new UserAdminEvents.PasswordResetRequested(actorUserId, userId));
     }
 
     @Transactional

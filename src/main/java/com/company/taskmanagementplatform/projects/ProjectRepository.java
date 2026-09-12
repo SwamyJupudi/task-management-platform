@@ -29,6 +29,19 @@ interface ProjectRepository extends JpaRepository<Project, UUID>, JpaSpecificati
     /** Every live project owned by this person anywhere, for when the account itself is removed. */
     List<Project> findAllByOwnerUserIdAndDeletedAtIsNull(UUID ownerUserId);
 
+    /**
+     * How many live projects exist anywhere, and how they are spread across the statuses.
+     *
+     * <p>The two methods here with no workspace predicate, for the platform statistics panel. They
+     * are reached only through {@code admin:read_system}, which no workspace role can hold and which
+     * is resolved without consulting any membership.
+     */
+    long countByDeletedAtIsNull();
+
+    /** @return rows of {@code [status, count]} across every workspace */
+    @Query("SELECT p.status, count(p) FROM Project p WHERE p.deletedAt IS NULL GROUP BY p.status")
+    List<Object[]> countByStatusPlatformWide();
+
     /** Every live project pointing at this team, so a deleted team leaves nothing dangling. */
     List<Project> findAllByWorkspaceIdAndTeamIdAndDeletedAtIsNull(UUID workspaceId, UUID teamId);
 

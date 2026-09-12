@@ -442,4 +442,42 @@ interface TaskRepository extends JpaRepository<Task, UUID>, JpaSpecificationExec
             @Param("from") java.time.LocalDate from,
             @Param("to") java.time.LocalDate to,
             org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * How many live tasks hold each status across every workspace, for the platform statistics.
+     *
+     * <p>The first query on this table with neither a workspace nor a scope predicate. It is reached
+     * only through {@code admin:read_system}, which no workspace role can hold, and it is a separate
+     * method rather than a nullable workspace on an existing one: a query that counted the whole
+     * installation because somebody passed a null identifier is the defect the admin panel has to be
+     * incapable of.
+     *
+     * @return rows of {@code [status, count]}
+     */
+    @Query("SELECT t.status, count(t) FROM Task t WHERE t.deletedAt IS NULL GROUP BY t.status")
+    List<Object[]> countByStatusPlatformWide();
+
+    long countByDeletedAtIsNull();
+
+    /**
+     * How much work is late across the installation.
+     *
+     * <p>The same definition as everywhere else: open, dated, and that date already past. Finished
+     * work is never overdue however late it was.
+     *
+     * <p>The date is passed in rather than read here, as it is on every other overdue query. Unlike
+     * the workspace-scoped ones it is UTC rather than a workspace's own today, because a figure
+     * spanning workspaces in different zones has no single today to use. That is stated on the
+     * response rather than left to be inferred.
+     */
+    @Query(
+            """
+            SELECT count(t) FROM Task t
+            WHERE t.deletedAt IS NULL
+              AND t.status <> :done
+              AND t.dueDate IS NOT NULL
+              AND t.dueDate < :today
+            """)
+    long countOverduePlatformWide(
+            @Param("done") TaskStatus done, @Param("today") java.time.LocalDate today);
 }

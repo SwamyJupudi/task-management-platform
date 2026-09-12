@@ -3,13 +3,19 @@ package com.company.taskmanagementplatform.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
 
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
@@ -31,6 +37,9 @@ class PlatformRoleAssignmentIT extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private MockMvc mockMvc;
 
     @Autowired
     private IdentityFixtures fixtures;
@@ -124,6 +133,79 @@ class PlatformRoleAssignmentIT extends AbstractIntegrationTest {
                         String.class,
                         person.id()))
                 .doesNotThrowAnyException();
+    }
+
+    // --- phase nine: the role becomes grantable over HTTP ---------------------
+    //
+    // Until the admin panel there was no endpoint for any of this, so an
+    // installation could not promote a second platform administrator without a
+    // redeploy. These four cover the new surface and the refusals that guard it.
+
+    @Test
+    void theRoleCanBeGrantedAndRevokedOverHttp() throws Exception {
+        UserAccount granter = fixtures.superAdmin(uniqueEmail("granter"));
+        UserAccount subject = fixtures.verifiedUser(uniqueEmail("subject"));
+        String bearer = fixtures.bearer(granter.id());
+
+        mockMvc.perform(put("/api/v1/users/" + subject.id() + "/platform-role")
+                        .header(HttpHeaders.AUTHORIZATION, bearer))
+                .andExpect(status().isOk());
+        assertThat(users.findById(subject.id()).orElseThrow().platformRoleId()).isNotNull();
+
+        mockMvc.perform(delete("/api/v1/users/" + subject.id() + "/platform-role")
+                        .header(HttpHeaders.AUTHORIZATION, bearer))
+                .andExpect(status().isNoContent());
+        assertThat(users.findById(subject.id()).orElseThrow().platformRoleId()).isNull();
+    }
+
+    @Test
+    void aNewlyPromotedAdministratorReachesThePlatformEndpointsAtOnce() throws Exception {
+        UserAccount granter = fixtures.superAdmin(uniqueEmail("granter"));
+        UserAccount subject = fixtures.verifiedUser(uniqueEmail("promoted"));
+
+        // Before: no platform role, so no reach.
+        mockMvc.perform(get("/api/v1/admin/statistics")
+                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(subject.id())))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/v1/users/" + subject.id() + "/platform-role")
+                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(granter.id())))
+                .andExpect(status().isOk());
+
+        // After: the same token, the next request. Nothing is cached anywhere in
+        // the authorization path, so there is nothing to invalidate.
+        mockMvc.perform(get("/api/v1/admin/statistics")
+                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(subject.id())))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void youCannotRevokeYourOwnRole() throws Exception {
+        UserAccount administrator = fixtures.superAdmin(uniqueEmail("self-revoke"));
+
+        mockMvc.perform(delete("/api/v1/users/" + administrator.id() + "/platform-role")
+                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(administrator.id())))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void oneOfSeveralAdministratorsMayBeDemoted() {
+        // The last-administrator refusal cannot be exercised here: the suite shares
+        // one container and one SUPER_ADMIN role, so other tests' administrators
+        // are always around and the count is never one. It is pinned in
+        // UserAccountServiceTest instead, where the holder count is controllable.
+        //
+        // What this asserts is the other side, which only real data can show: while
+        // more than one exists, demoting any of them is ordinary administration.
+        UserAccount granter = fixtures.superAdmin(uniqueEmail("keeps-role"));
+        UserAccount spare = fixtures.superAdmin(uniqueEmail("spare"));
+
+        assertThat(users.countHoldersOfPlatformRole(platformRoles.superAdminRoleId()))
+                .isGreaterThan(1);
+
+        assertThatCode(() -> platformRoles.revokeSuperAdmin(spare.id())).doesNotThrowAnyException();
+        assertThat(users.findById(spare.id()).orElseThrow().platformRoleId()).isNull();
+        assertThat(users.findById(granter.id()).orElseThrow().platformRoleId()).isNotNull();
     }
 
     @Test

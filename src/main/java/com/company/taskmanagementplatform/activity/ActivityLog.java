@@ -45,7 +45,19 @@ class ActivityLog {
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
 
-    @Column(name = "workspace_id", nullable = false, updatable = false)
+    /**
+     * Null exactly when the action happened outside any workspace.
+     *
+     * <p>Administering an account and granting the platform role belong to the installation rather
+     * than to one workspace, and phase nine is the first thing to record either. {@code V10} dropped
+     * the {@code NOT NULL} for them.
+     *
+     * <p><strong>The invariant that makes this safe:</strong> every workspace-scoped query filters
+     * on this column, so a platform row can never appear in a workspace's history, and the platform
+     * browse asks for {@code IS NULL}, so a workspace row can never appear in that. Both directions
+     * matter and both are asserted.
+     */
+    @Column(name = "workspace_id", updatable = false)
     private UUID workspaceId;
 
     @Column(name = "actor_user_id", updatable = false)
