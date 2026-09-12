@@ -127,6 +127,10 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
                 .contains(
                         "PATCH /api/v1/workspaces/{workspaceId}",
                         "DELETE /api/v1/workspaces/{workspaceId}",
+                        // Needs membership and no permission code, so it is the one
+                        // workspace route most worth seeing in this sweep: the only
+                        // thing between it and an anonymous caller is the chain.
+                        "GET /api/v1/workspaces/{workspaceId}/me",
                         "POST /api/v1/workspaces/{workspaceId}/archive",
                         "POST /api/v1/workspaces/{workspaceId}/unarchive",
                         "POST /api/v1/workspaces/{workspaceId}/teams",

@@ -23,6 +23,7 @@ import com.company.taskmanagementplatform.workspaces.dto.ChangeMemberRoleRequest
 import com.company.taskmanagementplatform.workspaces.dto.MemberResponse;
 import com.company.taskmanagementplatform.workspaces.dto.ReplaceRolePermissionsRequest;
 import com.company.taskmanagementplatform.workspaces.dto.RoleResponse;
+import com.company.taskmanagementplatform.workspaces.dto.WorkspacePermissionsResponse;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,6 +57,31 @@ class MemberController {
         this.roles = roles;
         this.roleAdmin = roleAdmin;
         this.guard = guard;
+    }
+
+    /**
+     * What the caller may do in this workspace.
+     *
+     * <p>Needs no permission code, only a relationship with the workspace, which is exactly what
+     * {@link WorkspaceAccessGuard#visiblePermissions} establishes: it answers 404 for a workspace
+     * that does not exist and for one the caller has nothing to do with, and otherwise returns the
+     * set. The notification feed is gated the same way and for the same reason.
+     *
+     * <p>Requiring a permission here would defeat the purpose. {@code role:read} would be the
+     * obvious candidate and an employee does not hold it, so the one caller who most needs to know
+     * what they may do would be the one caller unable to ask.
+     *
+     * <p>It discloses nothing new. Every code returned is one the caller already holds, and the only
+     * way to learn it otherwise is to make the request and see whether it is refused.
+     */
+    @GetMapping("/me")
+    @Operation(
+            summary = "What you may do in this workspace",
+            description = "The caller's own permission codes. Needs membership and nothing more")
+    WorkspacePermissionsResponse myPermissions(@PathVariable UUID workspaceId) {
+        return new WorkspacePermissionsResponse(
+                workspaceId,
+                guard.visiblePermissions(workspaceId).stream().sorted().toList());
     }
 
     @GetMapping("/members")

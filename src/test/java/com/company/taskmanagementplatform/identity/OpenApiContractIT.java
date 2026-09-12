@@ -63,6 +63,9 @@ class OpenApiContractIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}'].patch").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}'].delete").exists())
+                // The interface generates its client from this document, so an
+                // endpoint it depends on being absent here is a build failure there.
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/me'].get").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/archive'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/unarchive'].post").exists());
     }
