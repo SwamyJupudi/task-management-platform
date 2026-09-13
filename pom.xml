@@ -18,6 +18,24 @@
         <java.version>17</java.version>
         <springdoc.version>3.1.0</springdoc.version>
         <spotless.version>2.46.1</spotless.version>
+
+        <!--
+          The Spring profile `./mvnw spring-boot:run` starts with.
+
+          Only the `run` goal reads this, so it is local development and nothing
+          else: `repackage` is unaffected, the jar a deployment runs is
+          unaffected, and CI runs `verify`, which uses the `test` profile.
+
+          Without it a local run gets no profile at all, and
+          `application.properties` resolves the signing key from `${JWT_SECRET}`
+          with no default. Unset, that placeholder survives as its own literal
+          text, which is thirteen characters long and fails the HS256 minimum
+          with "It is 13." — a confusing way to be told the profile is missing.
+          The dev profile supplies a development key and startup succeeds.
+
+          Override for a one-off run with -Dspring-boot.run.profiles=<profile>.
+        -->
+        <spring-boot.run.profiles>dev</spring-boot.run.profiles>
     </properties>
 
     <dependencies>
