@@ -1,0 +1,5 @@
+# Sign-in, registration, recovery, email verification, and the session bootstrap that fills the session store.
+#
+# Placeholder so the feature structure required by section 23 of
+# docs/project-requirements.pdf survives a commit. Delete this file once the
+# folder holds real modules.
