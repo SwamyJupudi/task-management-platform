@@ -18,6 +18,7 @@
         <java.version>17</java.version>
         <springdoc.version>3.1.0</springdoc.version>
         <spotless.version>2.46.1</spotless.version>
+        <aws.sdk.version>2.54.17</aws.sdk.version>
 
         <!--
           The Spring profile `./mvnw spring-boot:run` starts with.
@@ -37,6 +38,25 @@
         -->
         <spring-boot.run.profiles>dev</spring-boot.run.profiles>
     </properties>
+
+    <!--
+      Spring Boot's parent manages every other version in this file. It does not
+      manage the AWS SDK, so the BOM is imported here and the one artifact below
+      inherits its version from it. Pinning the BOM rather than the artifact is
+      what keeps the SDK's own modules consistent with each other if a second
+      one is ever needed.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- web / persistence / validation / security / actuator -->
@@ -100,6 +120,15 @@
             <optional>true</optional>
         </dependency>
 
+        <!--
+          Object storage for attachments. Only the S3 module: the presigner the
+          download path needs lives in it, so no second artifact is required.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+        </dependency>
+
         <!-- test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -146,6 +175,17 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          LocalStack speaks the S3 API, so S3FileStore is exercised against a
+          real server rather than a mock. This suite already asks for Docker, so
+          the only cost is the image.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-localstack</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

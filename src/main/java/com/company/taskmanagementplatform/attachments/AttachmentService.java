@@ -149,7 +149,11 @@ public class AttachmentService {
     public AttachmentContent download(UUID workspaceId, UUID attachmentId) {
         Attachment attachment = requireReadable(workspaceId, attachmentId);
 
-        Optional<java.net.URI> signed = store.presignedUrl(attachment.getStorageKey(), properties.downloadUrlTtl());
+        Optional<java.net.URI> signed = store.presignedUrl(
+                attachment.getStorageKey(),
+                properties.downloadUrlTtl(),
+                attachment.getFilename(),
+                attachment.getContentType());
 
         return signed.map(url -> AttachmentContent.redirect(
                         attachment.getFilename(), attachment.getContentType(), attachment.getSizeBytes(), url))

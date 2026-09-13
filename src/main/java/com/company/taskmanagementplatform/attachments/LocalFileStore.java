@@ -71,8 +71,13 @@ class LocalFileStore implements FileStore {
         }
     }
 
+    /**
+     * Always empty: there is no way to sign a path on a local disk, and nothing outside this process
+     * could fetch it if there were. Every download from this store therefore streams, which means
+     * the streaming branch of the download endpoint is the one the test suite exercises by default.
+     */
     @Override
-    public Optional<URI> presignedUrl(String key, Duration ttl) {
+    public Optional<URI> presignedUrl(String key, Duration ttl, String filename, String contentType) {
         return Optional.empty();
     }
 

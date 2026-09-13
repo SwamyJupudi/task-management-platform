@@ -12,10 +12,10 @@ import java.util.Optional;
  * provider has been chosen. {@code architecture.md} records that decision as open, and choosing one
  * here would mean an unreviewed decision and a new SDK dependency arriving with a feature.
  *
- * <p>{@link #presignedUrl} is what makes the eventual swap a substitution rather than a redesign. A
- * store that can hand out a short-lived signed URL answers with one and the download endpoint
- * redirects; a store that cannot answers empty and the endpoint streams. The client sees one address
- * either way, so moving to direct-to-bucket downloads changes no contract.
+ * <p>{@link #presignedUrl} is what makes the swap a substitution rather than a redesign. A store
+ * that can hand out a short-lived signed URL answers with one and the download endpoint redirects; a
+ * store that cannot answers empty and the endpoint streams. The client sees one address either way,
+ * so moving to direct-to-bucket downloads changes no contract.
  *
  * <p>Implementations may throw. Unlike mail, a file that cannot be stored is a failed request rather
  * than a logged inconvenience: replying as though an upload succeeded would leave a comment
@@ -40,6 +40,17 @@ public interface FileStore {
     /** Removes the bytes. Not called by the ordinary delete, which is soft; see the purge note. */
     void delete(String key);
 
-    /** A short-lived URL the browser may follow directly, when the provider supports one. */
-    Optional<URI> presignedUrl(String key, Duration ttl);
+    /**
+     * A short-lived URL the browser may follow directly, when the provider supports one.
+     *
+     * <p>The filename and the content type are parameters rather than something the store looks up,
+     * because a signed URL has to carry them: the bytes do not pass through the application on this
+     * path, so {@code Content-Disposition: attachment} and the detected type have to be built into
+     * the signature or they are simply absent. A store that answers empty leaves the download to be
+     * streamed, and the controller sets both headers itself.
+     *
+     * @param filename the name to save as, already sanitised
+     * @param contentType the type detected from the bytes at upload, never the one a client declared
+     */
+    Optional<URI> presignedUrl(String key, Duration ttl, String filename, String contentType);
 }
