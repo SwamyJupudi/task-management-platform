@@ -4,7 +4,10 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    /* `vitest/globals` because the suite runs with `globals: true`, and test
+       files sit under `src` so this project compiles them too. Without it the
+       existing typecheck step fails on the first `describe`. */
+    "types": ["vite/client", "vitest/globals"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

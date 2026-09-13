@@ -84,7 +84,7 @@ jobs:
           retention-days: 7
 
   frontend:
-    name: Frontend - lint, typecheck and build
+    name: Frontend - lint, typecheck, test and build
     runs-on: ubuntu-latest
 
     defaults:
@@ -119,6 +119,12 @@ jobs:
       # attempted, which reads better than a build log that ends in tsc output.
       - name: Typecheck
         run: npx tsc -b --noEmit
+
+      # `--run` because Vitest watches by default, which would hang a pipeline.
+      # Placed before the build: a failing assertion is a clearer report than a
+      # bundle that succeeds and tells you nothing.
+      - name: Test
+        run: npm run test -- --run
 
       # VITE_API_BASE_URL is required at module load, and the build bakes it in.
       # A relative path is what .env.example documents and what the dev proxy
