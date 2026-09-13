@@ -18,7 +18,8 @@
       "files": ["src/components/ui/**"],
       "rules": {
         "typescript/consistent-type-imports": "off",
-        "react/only-export-components": "off"
+        "react/only-export-components": "off",
+        "eqeqeq": "off"
       }
     }
   ]
