@@ -2,6 +2,13 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppLayout } from '@/components/layout/app-layout'
 import { AuthLayout } from '@/components/layout/auth-layout'
+import {
+  ForgotPasswordPage,
+  LoginPage,
+  RegisterPage,
+  ResetPasswordPage,
+  VerifyEmailPage,
+} from '@/features/auth'
 import { ForbiddenPage } from '@/pages/forbidden-page'
 import { NotFoundPage } from '@/pages/not-found-page'
 import { PlaceholderPage } from '@/pages/placeholder-page'
@@ -31,22 +38,16 @@ export function AppRouter() {
       {/* Public. A signed-in user is bounced to the dashboard. */}
       <Route element={<RequireAnonymous />}>
         <Route element={<AuthLayout />}>
-          <Route path={paths.auth.login} element={<PlaceholderPage title="Sign in" />} />
-          <Route path={paths.auth.register} element={<PlaceholderPage title="Create an account" />} />
-          <Route
-            path={paths.auth.forgotPassword}
-            element={<PlaceholderPage title="Forgot your password" />}
-          />
-          <Route
-            path={paths.auth.resetPassword}
-            element={<PlaceholderPage title="Choose a new password" />}
-          />
+          <Route path={paths.auth.login} element={<LoginPage />} />
+          <Route path={paths.auth.register} element={<RegisterPage />} />
+          <Route path={paths.auth.forgotPassword} element={<ForgotPasswordPage />} />
+          <Route path={paths.auth.resetPassword} element={<ResetPasswordPage />} />
         </Route>
       </Route>
 
       {/* Reachable with or without a session: both arrive from an emailed link. */}
       <Route element={<AuthLayout />}>
-        <Route path={paths.auth.verifyEmail} element={<PlaceholderPage title="Verify your email" />} />
+        <Route path={paths.auth.verifyEmail} element={<VerifyEmailPage />} />
         <Route
           path={paths.auth.acceptInvitation}
           element={<PlaceholderPage title="Accept your invitation" />}

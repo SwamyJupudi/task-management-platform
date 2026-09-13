@@ -1,8 +1,9 @@
-import { MonitorIcon, MoonIcon, PanelLeftIcon, SunIcon } from 'lucide-react'
+import { LogOutIcon, MonitorIcon, MoonIcon, PanelLeftIcon, SunIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { env } from '@/config/env'
+import { useLogout } from '@/features/auth'
 import { useSessionStore } from '@/stores/session-store'
 import { useUiStore, type Theme } from '@/stores/ui-store'
 
@@ -29,6 +30,28 @@ function ThemeToggle() {
 }
 
 /**
+ * Ends the session and returns to the sign-in screen.
+ *
+ * No navigation of its own: clearing the session flips the store to
+ * `anonymous`, and `RequireAuth` redirects. One redirect, in one place.
+ */
+function SignOutButton() {
+  const logout = useLogout()
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => logout.mutate()}
+      disabled={logout.isPending}
+      aria-label="Sign out"
+    >
+      <LogOutIcon className="size-4" aria-hidden="true" />
+    </Button>
+  )
+}
+
+/**
  * The application bar.
  *
  * The workspace name comes from the session's membership list, so the header
@@ -39,6 +62,7 @@ export function AppHeader() {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar)
   const memberships = useSessionStore((state) => state.memberships)
   const activeWorkspaceId = useSessionStore((state) => state.activeWorkspaceId)
+  const user = useSessionStore((state) => state.user)
 
   const workspace = memberships.find((m) => m.workspaceId === activeWorkspaceId)
 
@@ -64,7 +88,13 @@ export function AppHeader() {
       ) : null}
 
       <div className="ml-auto flex items-center gap-1">
+        {user ? (
+          <span className="text-muted-foreground hidden truncate text-sm sm:inline">
+            {user.firstName} {user.lastName}
+          </span>
+        ) : null}
         <ThemeToggle />
+        <SignOutButton />
       </div>
     </header>
   )

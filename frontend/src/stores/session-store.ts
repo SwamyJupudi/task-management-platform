@@ -35,9 +35,19 @@ interface SessionState {
   /**
    * Permission codes held in the active workspace, from
    * `GET /workspaces/{id}/me`. Empty until that call resolves, so a guard
-   * should wait on `status` rather than treat empty as "denied".
+   * should wait on `workspacePermissionsLoaded` rather than treat empty as
+   * "denied".
    */
   workspacePermissions: string[]
+  /**
+   * Whether `workspacePermissions` has been answered for the active workspace.
+   *
+   * Without it an empty set is ambiguous: it is both "still loading" and
+   * "holds nothing here", and a guard that cannot tell them apart bounces a
+   * legitimate member to the forbidden page for the moment before the request
+   * returns.
+   */
+  workspacePermissionsLoaded: boolean
   accessToken: string | null
 }
 
@@ -58,6 +68,7 @@ const initialState: SessionState = {
   memberships: [],
   activeWorkspaceId: null,
   workspacePermissions: [],
+  workspacePermissionsLoaded: false,
   accessToken: null,
 }
 
@@ -67,29 +78,40 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
   setAccessToken: (accessToken) => set({ accessToken }),
 
   setCurrentUser: (current) =>
-    set((state) => ({
-      status: 'authenticated',
-      user: current.user,
-      platformRole: current.platformRole,
-      platformPermissions: current.platformPermissions,
-      memberships: current.memberships,
+    set((state) => {
       // Keep the chosen workspace if it is still one of theirs, otherwise
       // fall back to the first. Membership can be revoked between sessions.
-      activeWorkspaceId:
+      const activeWorkspaceId =
         current.memberships.find((m) => m.workspaceId === state.activeWorkspaceId)?.workspaceId ??
         current.memberships[0]?.workspaceId ??
-        null,
-    })),
+        null
+
+      // Permissions belong to the workspace they were fetched for. If the
+      // fallback above landed somewhere else, the set in hand describes a
+      // workspace this session is no longer showing.
+      const keepsWorkspace = activeWorkspaceId === state.activeWorkspaceId
+
+      return {
+        status: 'authenticated',
+        user: current.user,
+        platformRole: current.platformRole,
+        platformPermissions: current.platformPermissions,
+        memberships: current.memberships,
+        activeWorkspaceId,
+        workspacePermissions: keepsWorkspace ? state.workspacePermissions : [],
+        workspacePermissionsLoaded: keepsWorkspace ? state.workspacePermissionsLoaded : false,
+      }
+    }),
 
   setWorkspacePermissions: (workspaceId, permissions) => {
     // Ignore a response that arrived after the user switched away, which
     // would otherwise grant one workspace's permissions inside another.
     if (get().activeWorkspaceId !== workspaceId) return
-    set({ workspacePermissions: permissions })
+    set({ workspacePermissions: permissions, workspacePermissionsLoaded: true })
   },
 
   setActiveWorkspace: (activeWorkspaceId) =>
-    set({ activeWorkspaceId, workspacePermissions: [] }),
+    set({ activeWorkspaceId, workspacePermissions: [], workspacePermissionsLoaded: false }),
 
   markAnonymous: () => set({ ...initialState, status: 'anonymous' }),
 

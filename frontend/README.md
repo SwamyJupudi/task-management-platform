@@ -4,9 +4,10 @@ The React interface for the internal task and project management platform.
 It talks to the Spring backend in this same repository and has no server of
 its own.
 
-Scaffolding only at this stage: the routing, layout, API client, stores and
-configuration are in place, and the feature folders under `src/features` are
-empty. Authentication and the business features are later phases.
+The routing, layout, API client, stores and configuration are in place, and
+`src/features/auth` is built: sign-in, registration, email verification,
+password recovery, session restore and the route guards. The remaining feature
+folders under `src/features` are empty and are later phases.
 
 ## Stack
 
@@ -18,6 +19,7 @@ empty. Authentication and the business features are later phases.
 | Server state  | TanStack Query                            |
 | Client state  | Zustand                                   |
 | Routing       | React Router                              |
+| Forms         | React Hook Form, Zod                      |
 | Lint / format | oxlint, Prettier                          |
 
 ## Running it
@@ -54,6 +56,7 @@ src/
 │   └── ui/        shadcn/ui components. Generated; re-run the CLI to change
 ├── config/        Typed, validated environment
 ├── features/      One folder per feature, per section 23 of the requirements
+│   └── auth/      Session lifecycle, the five auth screens, guarded routing
 ├── hooks/         Cross-feature hooks: permissions, theme
 ├── lib/           API client and error model, TanStack Query setup
 ├── pages/         Standalone pages: 403, 404, placeholders
@@ -80,6 +83,36 @@ session, the permission set and interface preferences live in Zustand.
 Errors shown to a user always come from `toUserMessage`, which returns the
 backend's own user-facing wording for a deliberate error and one generic
 line for anything else. Internal detail is never rendered.
+
+## Authentication
+
+`src/features/auth` owns the session. Five screens — sign in, register, verify
+email, forgot password, reset password — plus the machinery that keeps a
+session alive across reloads.
+
+**The access token is held in memory only**, in the session store, and is never
+written to `localStorage` or `sessionStorage`. The long-lived credential is the
+refresh token, which the backend sets as an `HttpOnly`, `Secure`,
+`SameSite=Strict` cookie scoped to `/api/v1/auth`, so no script can read it and
+it is not attached to ordinary requests.
+
+A reload therefore loses the access token, and `SessionGate` is what makes that
+invisible: on start-up it spends the cookie once at `POST /auth/refresh` for a
+new token, then calls `GET /auth/me`. While that is in flight the session status
+is `unknown` and the route guards hold at a spinner rather than deciding.
+
+Renewal happens twice over. `session-manager.ts` schedules a refresh a minute
+before the token expires, and the API client retries any 401 once behind a
+silent refresh. Both funnel through a single in-flight promise, because the
+refresh token rotates and presenting a spent one is treated as theft and ends
+every session.
+
+Forms use React Hook Form with Zod schemas in `schemas.ts` that mirror the
+Jakarta constraints on the matching Spring records, so the browser refuses
+exactly what the server would. When the server rejects something anyway, its
+`errors` array is mapped back onto the offending fields and the summary is
+shown by `FormError`, which renders the backend's own message and the request
+id beneath it.
 
 ## Permissions
 

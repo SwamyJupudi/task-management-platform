@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { BrowserRouter } from 'react-router-dom'
 
 import { Toaster } from '@/components/ui/sonner'
+import { SessionGate } from '@/features/auth'
 import { useTheme } from '@/hooks/use-theme'
 import { createQueryClient } from '@/lib/query-client'
 
@@ -23,7 +24,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        {children}
+        {/* Inside the query client, because restoring a session and loading the
+            active workspace's permissions are both queries. */}
+        <SessionGate>{children}</SessionGate>
         <Toaster position="bottom-right" closeButton richColors />
       </QueryClientProvider>
     </BrowserRouter>

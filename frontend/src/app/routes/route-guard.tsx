@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { Navigate, Outlet, useLocation, type Location } from 'react-router-dom'
 
 import { FullPageSpinner } from '@/components/common/full-page-spinner'
 import { usePermissions } from '@/hooks/use-permissions'
@@ -58,12 +58,26 @@ export function RequirePermission({ codes, requireAll = false, children }: Requi
   return children ? <>{children}</> : <Outlet />
 }
 
-/** Keeps a signed-in user off the sign-in and registration screens. */
+/**
+ * Keeps a signed-in user off the sign-in and registration screens.
+ *
+ * It is also what completes a sign-in. `RequireAuth` records the page that was
+ * asked for in `state.from`; when the session appears, this sends the user
+ * there rather than to the dashboard. Doing it here rather than in the sign-in
+ * form means there is one redirect instead of two racing each other: the form
+ * only updates the store, and the route follows.
+ */
 export function RequireAnonymous({ children }: RequireAuthProps) {
   const status = useSessionStore((state) => state.status)
+  const location = useLocation()
 
   if (status === 'unknown') return <FullPageSpinner label="Checking your session" />
-  if (status === 'authenticated') return <Navigate to={paths.app.dashboard} replace />
+
+  if (status === 'authenticated') {
+    const from = (location.state as { from?: Location } | null)?.from
+    const intended = from ? `${from.pathname}${from.search}${from.hash}` : paths.app.dashboard
+    return <Navigate to={intended} replace />
+  }
 
   return children ? <>{children}</> : <Outlet />
 }

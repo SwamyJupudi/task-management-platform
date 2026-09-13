@@ -2,19 +2,24 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import App from './App'
+import { installSessionManager } from './features/auth'
 import { configureApiClient } from './lib/api'
 import { env } from './config/env'
 import { getAccessToken } from './stores/session-store'
 import './index.css'
 
 /**
- * Gives the API client its token source.
+ * Gives the API client its token source, then its two session seams.
  *
- * `refreshToken` and `onSessionExpired` are deliberately left unset: they
- * belong to the authentication feature, and until it exists a 401 simply
- * surfaces as an ApiError rather than triggering a refresh.
+ * `installSessionManager` fills in `refreshToken` and `onSessionExpired`, so a
+ * 401 on a call that carried a token is retried once behind a silent refresh
+ * and only becomes a sign-out when the refresh cookie is gone too.
+ *
+ * Both run before the first render, so no request can be made against a client
+ * that is only half configured.
  */
 configureApiClient({ getToken: getAccessToken })
+installSessionManager()
 
 document.title = env.appName
 

@@ -29,6 +29,8 @@ export function usePermissions(): PermissionChecks {
   const status = useSessionStore((state) => state.status)
   const platformPermissions = useSessionStore((state) => state.platformPermissions)
   const workspacePermissions = useSessionStore((state) => state.workspacePermissions)
+  const activeWorkspaceId = useSessionStore((state) => state.activeWorkspaceId)
+  const workspacePermissionsLoaded = useSessionStore((state) => state.workspacePermissionsLoaded)
 
   const has = useCallback(
     (code: string) => platformPermissions.includes(code) || workspacePermissions.includes(code),
@@ -38,7 +40,12 @@ export function usePermissions(): PermissionChecks {
   const hasAll = useCallback((codes: readonly string[]) => codes.every(has), [has])
   const hasAny = useCallback((codes: readonly string[]) => codes.some(has), [has])
 
-  return { has, hasAll, hasAny, ready: status !== 'unknown' }
+  // Not ready until both halves of the set are known. An account with no
+  // membership at all has no workspace half to wait for, so requiring one
+  // would hold it at a spinner forever.
+  const ready = status !== 'unknown' && (activeWorkspaceId === null || workspacePermissionsLoaded)
+
+  return { has, hasAll, hasAny, ready }
 }
 
 /** True when the account holds a platform role, i.e. can reach the admin panel. */
