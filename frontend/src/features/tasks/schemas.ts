@@ -117,3 +117,21 @@ export function parseLabels(raw: string): string[] {
 export function parseMinutes(raw: string): number | undefined {
   return raw.trim() === '' ? undefined : Number(raw)
 }
+
+/**
+ * One checklist item.
+ *
+ * `@NotBlank @Size(max = 200)` on `CreateSubtaskRequest`, the same bound a task
+ * title carries. A subtask has no description: the requirements show them as a
+ * list of titles, and the backend leaves the field out rather than inventing
+ * one.
+ */
+export const createSubtaskSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1, 'Enter something to add.')
+    .max(TITLE_MAX, `A checklist item cannot be longer than ${TITLE_MAX} characters.`),
+})
+
+export type CreateSubtaskValues = z.infer<typeof createSubtaskSchema>

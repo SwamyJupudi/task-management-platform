@@ -14,13 +14,20 @@ export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'REVIEW' | 'DONE'
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 
 /**
- * A link to another task, as the dependency lists carry it.
+ * One end of a dependency, as `TaskLinkResponse` carries it.
  *
- * Present on the response and rendered read-only in this phase: editing the
- * graph is the dependencies feature and its own endpoints.
+ * The identifier is `id`, not `taskId` — this record names the task at the far
+ * end of the edge rather than describing a relationship.
+ *
+ * `key` differs by where the link came from, which is worth knowing before
+ * rendering it. On a task response it is the full `PLAT-12`, composed by the
+ * mapper. On `GET /tasks/{id}/dependencies` it is the number alone, because
+ * that endpoint answers about one task whose project the caller already knows.
+ * Everything here reads the task response, so the full form is what is shown.
  */
 export interface TaskLink {
-  taskId: string
+  id: string
+  taskNumber: number
   key: string
   title: string
   status: TaskStatus
@@ -61,9 +68,9 @@ export interface Task {
   actualMinutes: number | null
   boardPosition: number
   labels: string[]
-  /** Tasks this one waits on. Read-only in this phase. */
+  /** Tasks this one waits on. */
   blockedBy: TaskLink[]
-  /** Tasks waiting on this one. Read-only in this phase. */
+  /** Tasks waiting on this one. */
   blocking: TaskLink[]
   /** True while an unfinished task blocks it. Surfaced, never enforced. */
   blocked: boolean
@@ -157,4 +164,55 @@ export interface ProjectMemberOption {
   firstName: string
   lastName: string
   owner: boolean
+}
+
+/**
+ * One checklist item under a task.
+ *
+ * `completed` is derived from the status by the backend rather than stored
+ * beside it — they are one fact, and the response shape says so. The status
+ * enum is the task's: the four board columns are the same four columns.
+ */
+export interface Subtask {
+  id: string
+  workspaceId: string
+  projectId: string
+  taskId: string
+  title: string
+  assigneeUserId: string | null
+  assigneeEmail: string | null
+  assigneeName: string | null
+  status: TaskStatus
+  /** True when the status is DONE. */
+  completed: boolean
+  dueDate: string | null
+  /** Order in the checklist. */
+  position: number
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** The body of `POST /tasks/{taskId}/subtasks`. */
+export interface CreateSubtaskInput {
+  title: string
+  assigneeUserId?: string | undefined
+  dueDate?: string | undefined
+  position?: number | undefined
+}
+
+/**
+ * The body of `PATCH /tasks/{taskId}/subtasks/{id}`.
+ *
+ * The assignee is a plain field here rather than an endpoint of its own, unlike
+ * a task's, and clearing either the assignee or the due date is an explicit
+ * flag because an omitted value means "leave it alone".
+ */
+export interface UpdateSubtaskInput {
+  title?: string | undefined
+  assigneeUserId?: string | undefined
+  clearAssignee?: boolean | undefined
+  dueDate?: string | undefined
+  clearDueDate?: boolean | undefined
+  position?: number | undefined
 }

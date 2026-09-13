@@ -15,12 +15,15 @@ import { useSessionStore } from '@/stores/session-store'
 import * as tasksApi from './api'
 import * as lookupsApi from './lookups'
 import type {
+  CreateSubtaskInput,
   CreateTaskInput,
+  Subtask,
   ProjectMemberOption,
   ProjectOption,
   Task,
   TaskFilters,
   TaskPageRequest,
+  UpdateSubtaskInput,
   UpdateTaskInput,
 } from './types'
 
@@ -281,4 +284,122 @@ export function useOwnsTaskProject(projectId: string | undefined): boolean {
   })
 
   return userId !== null && data?.ownerUserId === userId
+}
+
+// --- subtasks ---------------------------------------------------------------
+
+/**
+ * The checklist under one task.
+ *
+ * Not paged, because the endpoint is not: the backend returns the whole list,
+ * so the counts this feeds ("3 of 6 done") are counts of everything rather than
+ * of a page.
+ */
+export function useSubtasks(taskId: string | undefined): UseQueryResult<Subtask[]> {
+  const workspace = useActiveWorkspace()
+  const workspaceId = workspace?.workspaceId ?? null
+  const { canRead } = useTaskPermissions()
+
+  return useQuery({
+    queryKey: [...tasksRoot(workspaceId ?? 'none'), 'subtasks', taskId],
+    queryFn: () => tasksApi.listSubtasks(workspaceId as string, taskId as string),
+    enabled: workspaceId !== null && taskId !== undefined && canRead,
+    staleTime: STALE_MS,
+  })
+}
+
+/**
+ * Every subtask write, sharing one invalidation.
+ *
+ * Invalidating the whole task root rather than just the checklist, because
+ * ticking a subtask off changes the parent task's derived progress and the
+ * project's with it — the list and the board both show figures that move.
+ */
+export function useSubtaskMutations(taskId: string) {
+  const workspace = useActiveWorkspace()
+  const workspaceId = workspace?.workspaceId as string
+  const invalidate = useInvalidateTasks()
+
+  const create = useMutation({
+    mutationFn: (body: CreateSubtaskInput) => tasksApi.createSubtask(workspaceId, taskId, body),
+    onSuccess: invalidate,
+  })
+
+  const update = useMutation({
+    mutationFn: ({ subtaskId, body }: { subtaskId: string; body: UpdateSubtaskInput }) =>
+      tasksApi.updateSubtask(workspaceId, taskId, subtaskId, body),
+    onSuccess: invalidate,
+  })
+
+  const changeStatus = useMutation({
+    mutationFn: ({ subtaskId, status }: { subtaskId: string; status: string }) =>
+      tasksApi.changeSubtaskStatus(workspaceId, taskId, subtaskId, status),
+    onSuccess: invalidate,
+  })
+
+  const remove = useMutation({
+    mutationFn: (subtaskId: string) => tasksApi.deleteSubtask(workspaceId, taskId, subtaskId),
+    onSuccess: invalidate,
+  })
+
+  return { create, update, changeStatus, remove }
+}
+
+// --- dependencies -----------------------------------------------------------
+
+/**
+ * Adding and removing dependency edges.
+ *
+ * `remove` takes the task that holds the edge rather than always the task on
+ * screen, because an edge belongs to the waiting task: removing something this
+ * task is blocking means calling the other task's address.
+ */
+export function useDependencyMutations(taskId: string) {
+  const workspace = useActiveWorkspace()
+  const workspaceId = workspace?.workspaceId as string
+  const invalidate = useInvalidateTasks()
+
+  const add = useMutation({
+    mutationFn: (dependsOnTaskId: string) =>
+      tasksApi.addDependency(workspaceId, taskId, dependsOnTaskId),
+    onSuccess: invalidate,
+  })
+
+  const remove = useMutation({
+    mutationFn: ({
+      holderTaskId,
+      dependsOnTaskId,
+    }: {
+      holderTaskId: string
+      dependsOnTaskId: string
+    }) => tasksApi.removeDependency(workspaceId, holderTaskId, dependsOnTaskId),
+    onSuccess: invalidate,
+  })
+
+  return { add, remove }
+}
+
+/**
+ * Candidate blockers: the other tasks in the same project.
+ *
+ * A dependency cannot cross projects — the database enforces it, and the
+ * service refuses first — so the picker is scoped the same way rather than
+ * offering the workspace and letting most choices fail.
+ */
+export function useSameProjectTasks(projectId: string | undefined): UseQueryResult<Page<Task>> {
+  const workspace = useActiveWorkspace()
+  const workspaceId = workspace?.workspaceId ?? null
+  const { canRead } = useTaskPermissions()
+
+  return useQuery({
+    queryKey: [...tasksRoot(workspaceId ?? 'none'), 'project-tasks', projectId],
+    queryFn: () =>
+      tasksApi.listTasks(
+        workspaceId as string,
+        { projectId },
+        { page: 0, size: 100, sort: 'taskNumber,asc' },
+      ),
+    enabled: workspaceId !== null && projectId !== undefined && canRead,
+    staleTime: STALE_MS,
+  })
 }

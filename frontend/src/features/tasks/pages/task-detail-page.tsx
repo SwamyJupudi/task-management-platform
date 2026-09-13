@@ -16,12 +16,14 @@ import { useActiveWorkspace } from '@/hooks/use-active-workspace'
 import { toUserMessage } from '@/lib/api'
 
 import { AssigneePicker } from '../components/assignee-picker'
+import { DependenciesPanel } from '../components/dependencies-panel'
+import { SubtaskPanel } from '../components/subtask-panel'
 import { BlockedBadge, TaskPriorityBadge, TaskStatusBadge } from '../components/task-badges'
 import { TaskFormDialog } from '../components/task-form-dialog'
 import { TaskStatusMenu } from '../components/task-status-menu'
 import { formatMinutes } from '../constants'
 import { useChangeTaskStatus, useOwnsTaskProject, useTask, useTaskAbilities } from '../hooks'
-import type { Task, TaskStatus } from '../types'
+import type { TaskStatus } from '../types'
 
 /**
  * One task: its details, who holds it, and the actions the caller may take.
@@ -48,39 +50,6 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
     <div className="space-y-0.5">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="text-sm">{children}</dd>
-    </div>
-  )
-}
-
-/** The dependency lists, read-only. */
-function LinkedTasks({
-  title,
-  links,
-  workspaceSlug,
-}: {
-  title: string
-  links: Task['blockedBy']
-  workspaceSlug: string
-}) {
-  if (links.length === 0) return null
-
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      <ul className="space-y-1">
-        {links.map((link) => (
-          <li key={link.taskId} className="flex items-center gap-2 text-sm">
-            <Link
-              to={paths.workspace.task(workspaceSlug, link.taskId)}
-              className="shrink-0 font-mono text-xs text-muted-foreground hover:underline"
-            >
-              {link.key}
-            </Link>
-            <span className="min-w-0 truncate">{link.title}</span>
-            <TaskStatusBadge status={link.status} className="ml-auto shrink-0" />
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }
@@ -200,16 +169,6 @@ export function TaskDetailPage() {
                 <Detail label="Completed">{new Date(data.completedAt).toLocaleString()}</Detail>
               ) : null}
             </dl>
-
-            {data.blockedBy.length > 0 || data.blocking.length > 0 ? (
-              <>
-                <Separator />
-                <div className="space-y-4">
-                  <LinkedTasks title="Waiting on" links={data.blockedBy} workspaceSlug={slug} />
-                  <LinkedTasks title="Blocking" links={data.blocking} workspaceSlug={slug} />
-                </div>
-              </>
-            ) : null}
           </CardContent>
         </Card>
 
@@ -227,6 +186,30 @@ export function TaskDetailPage() {
             <p className="text-xs text-muted-foreground">
               Only members of {data.projectName} can hold this task.
             </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Checklist</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SubtaskPanel
+              task={data}
+              canEdit={abilities.canEdit}
+              canTick={abilities.canChangeStatus}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Dependencies</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <DependenciesPanel task={data} workspaceSlug={slug} canEdit={abilities.canEdit} />
           </CardContent>
         </Card>
       </div>

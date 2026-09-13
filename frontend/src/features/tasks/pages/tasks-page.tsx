@@ -1,6 +1,7 @@
 import { ListChecksIcon, LockIcon, PlusIcon } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { toast } from 'sonner'
 
 import { paths } from '@/app/routes/paths'
 import { EmptyState } from '@/components/common/empty-state'
@@ -9,15 +10,34 @@ import { LoadingState } from '@/components/common/loading-state'
 import { PageHeader } from '@/components/common/page-header'
 import { PaginationBar } from '@/components/common/pagination-bar'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActiveWorkspace } from '@/hooks/use-active-workspace'
+import { toUserMessage } from '@/lib/api'
 import { useSessionStore } from '@/stores/session-store'
 
+import { TaskBoard } from '../components/task-board'
 import { TaskFiltersBar } from '../components/task-filters'
 import { TaskFormDialog } from '../components/task-form-dialog'
 import { TaskList } from '../components/task-list'
-import { DEFAULT_PAGE_SIZE, DEFAULT_SORT, isTaskPriority, isTaskStatus } from '../constants'
-import { useTaskPermissions, useTasks } from '../hooks'
-import type { TaskFilters } from '../types'
+import {
+  DEFAULT_PAGE_SIZE,
+  DEFAULT_SORT,
+  STATUS_LABELS,
+  isTaskPriority,
+  isTaskStatus,
+} from '../constants'
+import { useChangeTaskStatus, useTaskPermissions, useTasks } from '../hooks'
+import type { Task, TaskFilters, TaskStatus } from '../types'
+
+/**
+ * How many tasks the board asks for.
+ *
+ * A board grouped by status is only useful if the columns hold everything the
+ * filter matched, so it asks for more than a page of twenty. It is still a
+ * bound rather than "all": past it the board says how many it is showing and
+ * suggests narrowing, instead of quietly drawing a partial picture.
+ */
+const BOARD_PAGE_SIZE = 100
 
 /**
  * The task listing, in two guises: everything the caller can reach, and their
@@ -52,6 +72,8 @@ function readFilters(params: URLSearchParams): TaskFilters {
   }
 }
 
+type View = 'list' | 'board'
+
 const FILTER_KEYS = ['status', 'priority', 'projectId', 'label', 'q'] as const
 const TOGGLE_KEYS = ['overdue', 'unassigned'] as const
 
@@ -75,12 +97,21 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
     [mine, userId, urlFilters],
   )
 
+  const view: View = searchParams.get('view') === 'board' ? 'board' : 'list'
+
   const pageRequest = useMemo(
-    () => ({ page: pageIndex, size: DEFAULT_PAGE_SIZE, sort }),
-    [pageIndex, sort],
+    () => ({
+      // The board reads one large page and groups it; the list pages normally.
+      page: view === 'board' ? 0 : pageIndex,
+      size: view === 'board' ? BOARD_PAGE_SIZE : DEFAULT_PAGE_SIZE,
+      sort: view === 'board' ? 'boardPosition,asc' : sort,
+    }),
+    [view, pageIndex, sort],
   )
 
   const tasks = useTasks(filters, pageRequest)
+  const changeStatus = useChangeTaskStatus()
+  const [pendingId, setPendingId] = useState<string | null>(null)
 
   /** Writes the URL, and resets to the first page whenever the result set changes. */
   const applyParams = useCallback(
@@ -109,6 +140,36 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
     },
     [applyParams],
   )
+
+  const onStatusChange = async (task: Task, status: TaskStatus) => {
+    setPendingId(task.id)
+    try {
+      await changeStatus.mutateAsync({ taskId: task.id, status })
+      toast.success(`${task.key} moved to ${STATUS_LABELS[status]}.`)
+    } catch (error) {
+      // Includes the 409 the state machine answers with. The board refuses an
+      // illegal drop before it starts, so this mostly catches a permission
+      // refusal or a task somebody else moved first.
+      toast.error(toUserMessage(error))
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  /**
+   * Whether the caller may move one particular card.
+   *
+   * The same compound rule the guard applies, as far as a listing can answer
+   * it: the code, plus manage_any or being the assignee or the reporter. The
+   * project owner and team lead cases need the project, which a listing does
+   * not carry, so those see the control hidden and use the detail screen.
+   */
+  const canMove = (task: Task) => {
+    if (!permissions.canChangeStatus) return false
+    if (permissions.manageAny) return true
+    if (userId === null) return false
+    return task.assigneeUserId === userId || task.reporterUserId === userId
+  }
 
   const header = (
     <PageHeader
@@ -154,12 +215,32 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
     <div className="space-y-6">
       {header}
 
-      <TaskFiltersBar
-        filters={urlFilters}
-        sort={sort}
-        onFiltersChange={onFiltersChange}
-        onSortChange={(next) => applyParams((params) => params.set('sort', next))}
-      />
+      <div className="space-y-3">
+        <Tabs
+          value={view}
+          onValueChange={(next) =>
+            applyParams((params) => {
+              if (next === 'list') params.delete('view')
+              else params.set('view', next)
+              // The board reads one large page from the start, so a page number
+              // carried over from the list would be meaningless on it.
+              params.delete('page')
+            }, false)
+          }
+        >
+          <TabsList>
+            <TabsTrigger value="list">List</TabsTrigger>
+            <TabsTrigger value="board">Board</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <TaskFiltersBar
+          filters={urlFilters}
+          sort={sort}
+          onFiltersChange={onFiltersChange}
+          onSortChange={(next) => applyParams((params) => params.set('sort', next))}
+        />
+      </div>
 
       {tasks.isError ? (
         <ErrorState error={tasks.error} onRetry={() => void tasks.refetch()} />
@@ -191,6 +272,23 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
             ) : undefined
           }
         />
+      ) : page && view === 'board' ? (
+        <div className="space-y-3">
+          <TaskBoard
+            tasks={page.content}
+            workspaceSlug={slug}
+            canMove={canMove}
+            onStatusChange={onStatusChange}
+            pendingId={pendingId}
+          />
+          {page.totalElements > page.content.length ? (
+            <p className="text-xs text-muted-foreground">
+              Showing the first {page.content.length.toLocaleString()} of{' '}
+              {page.totalElements.toLocaleString()} matching tasks. Narrow the filters to see a
+              complete board.
+            </p>
+          ) : null}
+        </div>
       ) : page ? (
         <div className="space-y-4">
           <TaskList
