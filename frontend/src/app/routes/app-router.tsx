@@ -10,6 +10,7 @@ import {
   VerifyEmailPage,
 } from '@/features/auth'
 import { DashboardPage } from '@/features/dashboard'
+import { ProjectDetailPage, ProjectsPage } from '@/features/projects'
 import { ForbiddenPage } from '@/pages/forbidden-page'
 import { NotFoundPage } from '@/pages/not-found-page'
 import { PlaceholderPage } from '@/pages/placeholder-page'
@@ -76,11 +77,8 @@ export function AppRouter() {
             <Route path={workspaceRoutes.dashboard} element={<DashboardPage />} />
 
             <Route element={<RequirePermission codes={['project:read', 'project:read_any']} />}>
-              <Route
-                path={workspaceRoutes.projects}
-                element={<PlaceholderPage title="Projects" />}
-              />
-              <Route path={workspaceRoutes.project} element={<PlaceholderPage title="Project" />} />
+              <Route path={workspaceRoutes.projects} element={<ProjectsPage />} />
+              <Route path={workspaceRoutes.project} element={<ProjectDetailPage />} />
             </Route>
 
             <Route element={<RequirePermission codes={['task:read']} />}>
