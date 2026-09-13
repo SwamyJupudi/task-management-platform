@@ -1,7 +1,14 @@
 import { api } from '@/lib/api'
 import type { CurrentUser } from '@/types/session'
 
-import type { AccountUser, AuthTokens, WorkspacePermissionsBody } from './types'
+import type {
+  AcceptedInvitation,
+  AcceptInvitationBody,
+  AccountUser,
+  AuthTokens,
+  InvitationPreview,
+  WorkspacePermissionsBody,
+} from './types'
 
 /**
  * Every authentication endpoint, in one place.
@@ -100,4 +107,45 @@ export function resetPassword(body: { token: string; newPassword: string }): Pro
  */
 export function workspacePermissions(workspaceId: string): Promise<WorkspacePermissionsBody> {
   return api.get<WorkspacePermissionsBody>(`/workspaces/${workspaceId}/me`)
+}
+
+/**
+ * `GET /invitations?token=…`. The public preview behind an invitation link.
+ *
+ * Anonymous on purpose, and for two reasons rather than one. The endpoint is
+ * `permitAll`, so a bearer token would be ignored; more importantly, a 401 here
+ * is a *business answer* — the token is unknown, revoked, already spent or
+ * past its date — and not an expired session. Sending it authenticated would
+ * make the client try to renew a session in response, and sign an anonymous
+ * visitor's empty session out in the process.
+ *
+ * The token is the only parameter the API takes in a query string anywhere, a
+ * bounded exception the backend documents: the page has to be reachable from a
+ * link in a message.
+ */
+export function previewInvitation(token: string): Promise<InvitationPreview> {
+  return api.get<InvitationPreview>('/invitations', { params: { token }, anonymous: true })
+}
+
+/**
+ * `POST /invitations/accept`. Redeems the invitation.
+ *
+ * `authenticated` is not a convenience. The endpoint is public, but it is not
+ * anonymous in every case: when an account already exists for the invited
+ * address the backend insists the caller *is* that account, reading the bearer
+ * token to decide. So the request must carry one when the visitor is signed in,
+ * and must not pretend to when they are not.
+ *
+ * The distinction matters because of what the client does with a 401. Every
+ * authenticated call retries once behind a session renewal, and gives up on the
+ * session when that fails. Here a 401 means "sign in as the invited account" or
+ * "that link cannot be used" — neither of which a renewal fixes. Passing
+ * `authenticated: false` for a visitor with no session keeps the client from
+ * trying to renew one that was never there.
+ */
+export function acceptInvitation(
+  body: AcceptInvitationBody,
+  authenticated: boolean,
+): Promise<AcceptedInvitation> {
+  return api.post<AcceptedInvitation>('/invitations/accept', body, { anonymous: !authenticated })
 }

@@ -96,7 +96,30 @@ export const resetPasswordSchema = z
   })
   .refine((values) => values.newPassword === values.confirmPassword, mismatch)
 
+/**
+ * Accepting an invitation when the invited address has no account yet.
+ *
+ * The same three fields registration asks for, minus the address: the
+ * invitation names it, it cannot be changed, and the token was sent to it — so
+ * offering an editable box would suggest the account could be created for
+ * somebody else.
+ *
+ * Mirrors `AcceptInvitationRequest`'s `@Size(max = 200)` on the password and
+ * `@Size(max = 80)` on the names, and the service's own rule that all three are
+ * required when no account exists. `confirmPassword` is this form's alone; the
+ * API has no such field and it is dropped before the request is built.
+ */
+export const acceptInvitationSchema = z
+  .object({
+    firstName: personName('first name'),
+    lastName: personName('last name'),
+    password: newPassword,
+    confirmPassword: z.string().min(1, 'Confirm your password.'),
+  })
+  .refine((values) => values.password === values.confirmPassword, mismatch)
+
 export type LoginValues = z.infer<typeof loginSchema>
 export type RegisterValues = z.infer<typeof registerSchema>
 export type EmailOnlyValues = z.infer<typeof emailOnlySchema>
 export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>
+export type AcceptInvitationValues = z.infer<typeof acceptInvitationSchema>

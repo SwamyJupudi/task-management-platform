@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/app-layout'
 import { AuthLayout } from '@/components/layout/auth-layout'
 import {
+  AcceptInvitationPage,
   ForgotPasswordPage,
   LoginPage,
   RegisterPage,
@@ -80,10 +81,7 @@ export function AppRouter() {
       {/* Reachable with or without a session: both arrive from an emailed link. */}
       <Route element={<AuthLayout />}>
         <Route path={paths.auth.verifyEmail} element={<VerifyEmailPage />} />
-        <Route
-          path={paths.auth.acceptInvitation}
-          element={<PlaceholderPage title="Accept your invitation" />}
-        />
+        <Route path={paths.auth.acceptInvitation} element={<AcceptInvitationPage />} />
       </Route>
 
       {/* Private. */}

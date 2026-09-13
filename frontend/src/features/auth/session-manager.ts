@@ -101,6 +101,22 @@ async function loadCurrentUser(): Promise<void> {
 }
 
 /**
+ * Re-reads the session behind the current token.
+ *
+ * The memberships in the store came from one `/auth/me` and do not change on
+ * their own, so joining a workspace has to be followed by asking again. Without
+ * it the interface would hold a token that reaches the new workspace and a
+ * membership list that does not name it, and every link into it would land on
+ * the "workspace not found" screen.
+ *
+ * Exported for exactly that: accepting an invitation is the one thing a
+ * signed-in person does that changes which workspaces they belong to.
+ */
+export async function reloadCurrentUser(): Promise<void> {
+  await loadCurrentUser()
+}
+
+/**
  * Puts a completed sign-in into effect.
  *
  * Two calls rather than one because `/auth/login` returns the account but not
