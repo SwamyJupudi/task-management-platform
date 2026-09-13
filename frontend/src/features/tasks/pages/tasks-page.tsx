@@ -1,4 +1,11 @@
-import { ListChecksIcon, LockIcon, PlusIcon } from 'lucide-react'
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ListChecksIcon,
+  LockIcon,
+  PlusIcon,
+  XIcon,
+} from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -9,6 +16,7 @@ import { ErrorState } from '@/components/common/error-state'
 import { LoadingState } from '@/components/common/loading-state'
 import { PageHeader } from '@/components/common/page-header'
 import { PaginationBar } from '@/components/common/pagination-bar'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActiveWorkspace } from '@/hooks/use-active-workspace'
@@ -16,6 +24,7 @@ import { toUserMessage } from '@/lib/api'
 import { useSessionStore } from '@/stores/session-store'
 
 import { TaskBoard } from '../components/task-board'
+import { TaskCalendar } from '../components/task-calendar'
 import { TaskFiltersBar } from '../components/task-filters'
 import { TaskFormDialog } from '../components/task-form-dialog'
 import { TaskList } from '../components/task-list'
@@ -27,6 +36,16 @@ import {
   isTaskStatus,
 } from '../constants'
 import { useChangeTaskStatus, useTaskPermissions, useTasks } from '../hooks'
+import {
+  currentMonth,
+  dayLabel,
+  firstDayOf,
+  isDateKey,
+  isMonthKey,
+  lastDayOf,
+  monthLabel,
+  shiftMonth,
+} from '../month'
 import type { Task, TaskFilters, TaskStatus } from '../types'
 
 /**
@@ -38,6 +57,18 @@ import type { Task, TaskFilters, TaskStatus } from '../types'
  * suggests narrowing, instead of quietly drawing a partial picture.
  */
 const BOARD_PAGE_SIZE = 100
+
+/**
+ * How many tasks a month asks for.
+ *
+ * The same bargain the board makes, one size larger because a month of
+ * deadlines across a whole workspace is a bigger set than a board of open work.
+ * It is still a bound: the task listing has no cap of its own and Spring's
+ * default silently *clamps* an oversized request rather than refusing it, so
+ * asking for everything would risk drawing a partial month with nothing to say
+ * it was partial. Past this the calendar says how many it is showing.
+ */
+const CALENDAR_PAGE_SIZE = 200
 
 /**
  * The task listing, in two guises: everything the caller can reach, and their
@@ -61,18 +92,28 @@ function readFilters(params: URLSearchParams): TaskFilters {
   const label = params.get('label')
   const q = params.get('q')
 
+  // Both ends of a date narrowing, which the calendar writes when a day is
+  // clicked. Deliberately not part of FILTER_KEYS: the filter bar has no date
+  // control, so letting it manage these would mean every unrelated change to a
+  // status or a label silently dropped the day somebody had just chosen. The
+  // page clears them with its own control instead.
+  const dueAfter = params.get('dueAfter')
+  const dueBefore = params.get('dueBefore')
+
   return {
     ...(status && isTaskStatus(status) ? { status } : {}),
     ...(priority && isTaskPriority(priority) ? { priority } : {}),
     ...(projectId ? { projectId } : {}),
     ...(label ? { label } : {}),
     ...(q ? { q } : {}),
+    ...(dueAfter && isDateKey(dueAfter) ? { dueAfter } : {}),
+    ...(dueBefore && isDateKey(dueBefore) ? { dueBefore } : {}),
     ...(params.get('overdue') === 'true' ? { overdue: true } : {}),
     ...(params.get('unassigned') === 'true' ? { unassigned: true } : {}),
   }
 }
 
-type View = 'list' | 'board'
+type View = 'list' | 'board' | 'calendar'
 
 const FILTER_KEYS = ['status', 'priority', 'projectId', 'label', 'q'] as const
 const TOGGLE_KEYS = ['overdue', 'unassigned'] as const
@@ -92,19 +133,53 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
 
   // My Tasks pins the assignee rather than offering it as a filter, so the
   // screen cannot be turned into somebody else's list by editing the URL.
-  const filters = useMemo<TaskFilters>(
+  const ownFilters = useMemo<TaskFilters>(
     () => (mine && userId !== null ? { ...urlFilters, assigneeUserId: userId } : urlFilters),
     [mine, userId, urlFilters],
   )
 
-  const view: View = searchParams.get('view') === 'board' ? 'board' : 'list'
+  const requestedView = searchParams.get('view')
+  const view: View =
+    requestedView === 'board' ? 'board' : requestedView === 'calendar' ? 'calendar' : 'list'
+
+  /**
+   * The month the calendar is showing.
+   *
+   * Its own parameter rather than part of the filter object, so that switching
+   * to the list does not leave a hidden date range narrowing it, and so the
+   * shared filter bar has nothing to know about months.
+   */
+  const monthParam = searchParams.get('month')
+  const month = monthParam !== null && isMonthKey(monthParam) ? monthParam : currentMonth()
+
+  /**
+   * The month's closed range, added only on the calendar.
+   *
+   * `dueAfter` and `dueBefore` are both inclusive server-side despite their
+   * names, so the first and last of the month is exactly the month. A task with
+   * no deadline satisfies neither comparison and is therefore absent, which is
+   * what a calendar wants and is why the count below is worth showing.
+   */
+  const filters = useMemo<TaskFilters>(
+    () =>
+      view === 'calendar'
+        ? { ...ownFilters, dueAfter: firstDayOf(month), dueBefore: lastDayOf(month) }
+        : ownFilters,
+    [view, month, ownFilters],
+  )
 
   const pageRequest = useMemo(
     () => ({
-      // The board reads one large page and groups it; the list pages normally.
-      page: view === 'board' ? 0 : pageIndex,
-      size: view === 'board' ? BOARD_PAGE_SIZE : DEFAULT_PAGE_SIZE,
-      sort: view === 'board' ? 'boardPosition,asc' : sort,
+      // The board and the calendar each read one large page and group it; the
+      // list pages normally.
+      page: view === 'list' ? pageIndex : 0,
+      size:
+        view === 'board'
+          ? BOARD_PAGE_SIZE
+          : view === 'calendar'
+            ? CALENDAR_PAGE_SIZE
+            : DEFAULT_PAGE_SIZE,
+      sort: view === 'board' ? 'boardPosition,asc' : view === 'calendar' ? 'dueDate,asc' : sort,
     }),
     [view, pageIndex, sort],
   )
@@ -211,6 +286,14 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
   const slug = workspace?.workspaceSlug ?? ''
   const filtered = Object.keys(urlFilters).length > 0
 
+  /** A single day chosen from the calendar, which is both ends set to it. */
+  const dayNarrowing =
+    view !== 'calendar' &&
+    urlFilters.dueAfter !== undefined &&
+    urlFilters.dueAfter === urlFilters.dueBefore
+      ? urlFilters.dueAfter
+      : null
+
   return (
     <div className="space-y-6">
       {header}
@@ -231,8 +314,61 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
           <TabsList>
             <TabsTrigger value="list">List</TabsTrigger>
             <TabsTrigger value="board">Board</TabsTrigger>
+            <TabsTrigger value="calendar">Calendar</TabsTrigger>
           </TabsList>
         </Tabs>
+
+        {view === 'calendar' ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Previous month"
+              onClick={() => applyParams((params) => params.set('month', shiftMonth(month, -1)))}
+            >
+              <ChevronLeftIcon aria-hidden="true" />
+            </Button>
+            <span className="min-w-[10rem] text-center text-sm font-medium" aria-live="polite">
+              {monthLabel(month)}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Next month"
+              onClick={() => applyParams((params) => params.set('month', shiftMonth(month, 1)))}
+            >
+              <ChevronRightIcon aria-hidden="true" />
+            </Button>
+            {month !== currentMonth() ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => applyParams((params) => params.delete('month'))}
+              >
+                This month
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {dayNarrowing ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">Due on {dayLabel(dayNarrowing)}</Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                applyParams((params) => {
+                  params.delete('dueAfter')
+                  params.delete('dueBefore')
+                })
+              }
+            >
+              <XIcon aria-hidden="true" />
+              Clear this day
+            </Button>
+          </div>
+        ) : null}
 
         <TaskFiltersBar
           filters={urlFilters}
@@ -272,6 +408,38 @@ export function TasksPage({ mine = false }: { mine?: boolean }) {
             ) : undefined
           }
         />
+      ) : page && view === 'calendar' ? (
+        <div className="space-y-3">
+          <TaskCalendar
+            month={month}
+            tasks={page.content}
+            workspaceSlug={slug}
+            onSelectDay={(date) =>
+              // Narrowing to a day is the list, filtered to that date. The
+              // calendar has nothing smaller than a cell to show, and the list
+              // already has the columns somebody wants once they get there.
+              applyParams((params) => {
+                params.delete('view')
+                params.delete('month')
+                params.set('dueAfter', date)
+                params.set('dueBefore', date)
+              })
+            }
+          />
+          {page.totalElements > page.content.length ? (
+            <p className="text-xs text-muted-foreground">
+              Showing the first {page.content.length.toLocaleString()} of{' '}
+              {page.totalElements.toLocaleString()} tasks due this month. Narrow the filters to see
+              a complete calendar.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {page.totalElements.toLocaleString()}{' '}
+              {page.totalElements === 1 ? 'task is' : 'tasks are'} due in {monthLabel(month)}. Tasks
+              with no due date do not appear on a calendar.
+            </p>
+          )}
+        </div>
       ) : page && view === 'board' ? (
         <div className="space-y-3">
           <TaskBoard
