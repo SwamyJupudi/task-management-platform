@@ -1,13 +1,13 @@
 import { CalendarClockIcon, CircleAlertIcon, ListChecksIcon, SquareCheckIcon } from 'lucide-react'
 
+import { DistributionChart } from '@/components/charts/distribution-chart'
 import { ErrorState } from '@/components/common/error-state'
+import { Panel } from '@/components/common/panel'
+import { StatCard } from '@/components/common/stat-card'
 
 import { useEmployeeDashboard } from '../hooks'
-import { DistributionChart } from './distribution-chart'
-import { Panel } from './panel'
 import { ProjectProgressList } from './project-progress-list'
 import { RecentActivityList } from './recent-activity-list'
-import { StatCard } from './stat-card'
 import { UpcomingDeadlinesList } from './upcoming-deadlines-list'
 
 /**

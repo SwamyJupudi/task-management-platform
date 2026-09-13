@@ -27,3 +27,21 @@ export function relativeTime(iso: string): string {
 
   return new Date(then).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 }
+
+/**
+ * Renders an effort field the way it is entered: in minutes.
+ *
+ * Hours would read better but would need a unit the API does not carry, and
+ * rounding 90 minutes to "1.5h" and back loses what was typed.
+ *
+ * Shared rather than owned by the tasks feature: a task shows its own estimate
+ * and the workload report sums the estimates of everything somebody is holding,
+ * and the two have to be written the same way to be read together.
+ */
+export function formatMinutes(minutes: number | null): string {
+  if (minutes === null || minutes === 0) return '—'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
+}

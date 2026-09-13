@@ -13,6 +13,14 @@ import { DashboardPage } from '@/features/dashboard'
 import { PeoplePage } from '@/features/people'
 import { NotificationsPage } from '@/features/notifications'
 import { ProjectDetailPage, ProjectsPage } from '@/features/projects'
+import {
+  OverdueReportPage,
+  ProjectReportPage,
+  ReportsOverviewPage,
+  TaskReportPage,
+  TeamReportPage,
+  WorkloadReportPage,
+} from '@/features/reports'
 import { TaskDetailPage, TasksPage } from '@/features/tasks'
 import { TeamDetailPage, TeamsPage } from '@/features/teams'
 import { ForbiddenPage } from '@/pages/forbidden-page'
@@ -89,7 +97,19 @@ export function AppRouter() {
               <Route path={workspaceRoutes.tasks} element={<TasksPage />} />
               <Route path={workspaceRoutes.myTasks} element={<TasksPage mine />} />
               <Route path={workspaceRoutes.task} element={<TaskDetailPage />} />
-              <Route path={workspaceRoutes.reports} element={<PlaceholderPage title="Reports" />} />
+              {/* Every report is computed over the caller's project scope, so
+                  `task:read` is the gate for all of them. Two of the screens
+                  need more than that — the project report needs `project:read`
+                  and the team report needs the workspace dashboard's three
+                  codes — and each says so itself rather than being routed to
+                  403, because losing one of those grants leaves the rest of
+                  the section perfectly usable. */}
+              <Route path={workspaceRoutes.reports} element={<ReportsOverviewPage />} />
+              <Route path={workspaceRoutes.reportProjects} element={<ProjectReportPage />} />
+              <Route path={workspaceRoutes.reportTasks} element={<TaskReportPage />} />
+              <Route path={workspaceRoutes.reportOverdue} element={<OverdueReportPage />} />
+              <Route path={workspaceRoutes.reportWorkload} element={<WorkloadReportPage />} />
+              <Route path={workspaceRoutes.reportTeams} element={<TeamReportPage />} />
             </Route>
 
             <Route element={<RequirePermission codes={['team:read']} />}>

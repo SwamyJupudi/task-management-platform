@@ -6,15 +6,15 @@ import {
   UsersRoundIcon,
 } from 'lucide-react'
 
+import { DistributionChart } from '@/components/charts/distribution-chart'
 import { ErrorState } from '@/components/common/error-state'
+import { Panel } from '@/components/common/panel'
+import { StatCard } from '@/components/common/stat-card'
 import { Progress } from '@/components/ui/progress'
 
 import { useProjectStatusDistribution, useWorkspaceDashboard } from '../hooks'
-import { DistributionChart } from './distribution-chart'
-import { Panel } from './panel'
 import { ProjectProgressList } from './project-progress-list'
 import { ProjectStatusChart } from './project-status-chart'
-import { StatCard } from './stat-card'
 import { TeamPerformanceTable } from './team-performance-table'
 
 /**

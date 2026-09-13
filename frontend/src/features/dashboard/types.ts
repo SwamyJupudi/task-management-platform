@@ -6,58 +6,28 @@
  * count, a label — is read rather than recomputed, because the platform has one
  * rule for each of those and a second copy here would disagree with it the
  * first time either changed.
+ *
+ * The shapes the reports feature reads as well live in `@/types/reports` and
+ * are re-exported below, so a component importing from here does not have to
+ * know which of the two owns a given record.
  */
+
+import type {
+  CountByKey,
+  Distribution,
+  ProjectProgress,
+  TeamPerformance,
+} from '@/types/reports'
 
 /**
- * One column of a breakdown.
+ * The four shapes the reports module also returns.
  *
- * A list rather than a map keyed by status, because the order of a status
- * breakdown is the order of the board and an object has none. `label` is the
- * key written for a person, so the interface never needs to know the platform's
- * enums to draw a chart. Every column is present, including those nothing
- * holds, so a chart never has to guess the full set.
+ * Re-exported rather than redeclared. The dashboard summarises the same records
+ * the report screens page through, and two hand-written copies of one wire
+ * shape disagree the first time either is edited. Imported as well as
+ * re-exported, because the composite bodies below are written in terms of them.
  */
-export interface CountByKey {
-  key: string
-  label: string
-  count: number
-}
-
-/** Task counts by status and by priority. Each list sums to `total`. */
-export interface Distribution {
-  byStatus: CountByKey[]
-  byPriority: CountByKey[]
-  total: number
-}
-
-/** One project's derived progress beside its task counts. */
-export interface ProjectProgress {
-  projectId: string
-  key: string
-  name: string
-  status: string
-  /** The derived percentage the projects module maintains, 0 to 100. */
-  progress: number
-  totalTasks: number
-  doneTasks: number
-  overdueTasks: number
-  teamId: string | null
-  ownerUserId: string | null
-}
-
-/** One team's line on the workspace dashboard. */
-export interface TeamPerformance {
-  teamId: string
-  name: string
-  leadUserId: string | null
-  memberCount: number
-  projectCount: number
-  openTasks: number
-  overdueTasks: number
-  completedTasks: number
-  /** Mean of the derived progress column across the team's projects. */
-  averageProgress: number
-}
+export type { CountByKey, Distribution, ProjectProgress, TeamPerformance }
 
 /** One of the caller's own tasks due inside the lead window. */
 export interface UpcomingDeadline {

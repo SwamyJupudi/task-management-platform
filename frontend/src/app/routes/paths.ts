@@ -39,6 +39,13 @@ export const workspaceRoutes = {
   user: 'users/:userId',
   notifications: 'notifications',
   reports: 'reports',
+  // Each report is its own route rather than a tab, so a narrowed report is a
+  // link somebody can send and the back button steps between them.
+  reportProjects: 'reports/projects',
+  reportTasks: 'reports/tasks',
+  reportOverdue: 'reports/overdue',
+  reportWorkload: 'reports/workload',
+  reportTeams: 'reports/teams',
   settings: 'settings',
 } as const
 
@@ -80,6 +87,11 @@ export const paths = {
 
     notifications: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.notifications}`,
     reports: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reports}`,
+    reportProjects: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reportProjects}`,
+    reportTasks: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reportTasks}`,
+    reportOverdue: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reportOverdue}`,
+    reportWorkload: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reportWorkload}`,
+    reportTeams: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reportTeams}`,
     settings: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.settings}`,
   },
 

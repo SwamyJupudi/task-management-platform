@@ -7,11 +7,15 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart'
-
-import type { CountByKey } from '../types'
+import type { CountByKey } from '@/types/reports'
 
 /**
  * A breakdown as a horizontal bar chart.
+ *
+ * Shared rather than owned by a feature: the dashboard draws one of these and
+ * every report that breaks tasks down draws another, and they must look alike
+ * to be compared. It takes the backend's own `CountByKey`, so a caller passes
+ * the response through rather than reshaping it.
  *
  * Horizontal because the labels are words — "In progress", "Critical" — and a
  * vertical chart either truncates them or turns them on their side. Read down

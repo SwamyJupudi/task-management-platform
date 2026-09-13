@@ -78,5 +78,9 @@ export const segmentTitles: Readonly<Record<string, string>> = {
   users: 'People',
   notifications: 'Notifications',
   reports: 'Reports',
+  // The two report segments that are not already a word the trail knows.
+  // `projects`, `tasks` and `teams` read correctly under Reports as they are.
+  overdue: 'Overdue',
+  workload: 'Workload',
   settings: 'Settings',
 }

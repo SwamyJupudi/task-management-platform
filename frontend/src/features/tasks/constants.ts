@@ -73,15 +73,9 @@ export function isTaskPriority(value: string): value is TaskPriority {
 }
 
 /**
- * Renders an effort field the way it is entered: in minutes.
+ * Re-exported from `@/lib/datetime`, where it now lives.
  *
- * Hours would read better but would need a unit the API does not carry, and
- * rounding 90 minutes to "1.5h" and back loses what was typed.
+ * The workload report writes the same effort figures, so there is one
+ * implementation and two features reading it rather than two that drift.
  */
-export function formatMinutes(minutes: number | null): string {
-  if (minutes === null || minutes === 0) return '—'
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
-}
+export { formatMinutes } from '@/lib/datetime'
