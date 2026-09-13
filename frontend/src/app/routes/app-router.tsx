@@ -11,6 +11,7 @@ import {
 } from '@/features/auth'
 import { DashboardPage } from '@/features/dashboard'
 import { ProjectDetailPage, ProjectsPage } from '@/features/projects'
+import { TaskDetailPage, TasksPage } from '@/features/tasks'
 import { ForbiddenPage } from '@/pages/forbidden-page'
 import { NotFoundPage } from '@/pages/not-found-page'
 import { PlaceholderPage } from '@/pages/placeholder-page'
@@ -82,12 +83,9 @@ export function AppRouter() {
             </Route>
 
             <Route element={<RequirePermission codes={['task:read']} />}>
-              <Route path={workspaceRoutes.tasks} element={<PlaceholderPage title="Tasks" />} />
-              <Route
-                path={workspaceRoutes.myTasks}
-                element={<PlaceholderPage title="My tasks" />}
-              />
-              <Route path={workspaceRoutes.task} element={<PlaceholderPage title="Task" />} />
+              <Route path={workspaceRoutes.tasks} element={<TasksPage />} />
+              <Route path={workspaceRoutes.myTasks} element={<TasksPage mine />} />
+              <Route path={workspaceRoutes.task} element={<TaskDetailPage />} />
               <Route path={workspaceRoutes.reports} element={<PlaceholderPage title="Reports" />} />
             </Route>
 
