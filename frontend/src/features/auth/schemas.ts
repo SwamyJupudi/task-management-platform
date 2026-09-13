@@ -118,8 +118,34 @@ export const acceptInvitationSchema = z
   })
   .refine((values) => values.password === values.confirmPassword, mismatch)
 
+/**
+ * Changing a password from inside a session.
+ *
+ * Mirrors `ChangePasswordRequest`: the current password is required and bounded
+ * only by length, because an old password that no longer meets today's rules is
+ * still the right answer to "what is it now". The new one gets the full check.
+ *
+ * The refinement is this form's own. Re-entering the password you already have
+ * is not an error the backend refuses, but it is never what somebody meant.
+ */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Enter your current password.').max(PASSWORD_MAX),
+    newPassword,
+    confirmPassword: z.string().min(1, 'Confirm your new password.'),
+  })
+  .refine((values) => values.newPassword === values.confirmPassword, {
+    message: 'The passwords do not match.',
+    path: ['confirmPassword'],
+  })
+  .refine((values) => values.currentPassword !== values.newPassword, {
+    message: 'The new password must be different from the current one.',
+    path: ['newPassword'],
+  })
+
 export type LoginValues = z.infer<typeof loginSchema>
 export type RegisterValues = z.infer<typeof registerSchema>
 export type EmailOnlyValues = z.infer<typeof emailOnlySchema>
 export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>
 export type AcceptInvitationValues = z.infer<typeof acceptInvitationSchema>
+export type ChangePasswordValues = z.infer<typeof changePasswordSchema>

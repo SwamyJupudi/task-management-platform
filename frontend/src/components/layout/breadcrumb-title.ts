@@ -55,6 +55,9 @@ export function useSetBreadcrumbTitle(label: string | null | undefined): void {
  * Workspace paths are matched with the `/w/:slug` prefix already stripped.
  */
 export const pathTitles: Readonly<Record<string, string>> = {
+  '/account': 'Your account',
+  '/account/password': 'Password',
+  '/account/sessions': 'Sessions',
   '/admin': 'Admin',
   '/admin/users': 'Accounts',
   '/admin/roles': 'Roles and permissions',

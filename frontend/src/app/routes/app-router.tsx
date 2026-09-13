@@ -18,6 +18,11 @@ import {
   PlatformTeamsPage,
   RolesPage,
 } from '@/features/admin'
+import {
+  AccountPasswordPage,
+  AccountProfilePage,
+  AccountSessionsPage,
+} from '@/features/account'
 import { DashboardPage } from '@/features/dashboard'
 import { PeoplePage } from '@/features/people'
 import { NotificationsPage } from '@/features/notifications'
@@ -134,6 +139,17 @@ export function AppRouter() {
               element={<PlaceholderPage title="Workspace settings" />}
             />
           </Route>
+        </Route>
+
+        {/* Your own account, outside every workspace. Its endpoints are gated
+            on `isAuthenticated()` alone and take their subject from the
+            security context rather than from a path, so there is no permission
+            to check here and no workspace to scope to — being signed in is the
+            whole of it. */}
+        <Route element={<AppLayout />}>
+          <Route path={paths.account.root} element={<AccountProfilePage />} />
+          <Route path={paths.account.password} element={<AccountPasswordPage />} />
+          <Route path={paths.account.sessions} element={<AccountSessionsPage />} />
         </Route>
 
         {/* The admin panel, outside every workspace and staying that way. Its

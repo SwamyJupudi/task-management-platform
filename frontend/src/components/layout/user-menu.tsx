@@ -1,4 +1,4 @@
-import { BellIcon, LogOutIcon, MonitorIcon, MoonIcon, SettingsIcon, SunIcon } from 'lucide-react'
+import { BellIcon, LogOutIcon, MonitorIcon, MoonIcon, SettingsIcon, SunIcon, UserIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { paths } from '@/app/routes/paths'
@@ -93,6 +93,16 @@ export function UserMenu() {
         ) : null}
 
         <DropdownMenuSeparator />
+
+        {/* Outside the workspace block on purpose: an account exists whether or
+            not this person belongs to a workspace, and somebody with no
+            membership still needs their password and their sessions. */}
+        <DropdownMenuItem asChild>
+          <Link to={paths.account.root}>
+            <UserIcon aria-hidden="true" />
+            Your account
+          </Link>
+        </DropdownMenuItem>
 
         {workspace ? (
           <>

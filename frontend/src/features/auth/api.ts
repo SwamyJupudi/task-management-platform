@@ -149,3 +149,33 @@ export function acceptInvitation(
 ): Promise<AcceptedInvitation> {
   return api.post<AcceptedInvitation>('/invitations/accept', body, { anonymous: !authenticated })
 }
+
+/**
+ * `POST /auth/password/change`.
+ *
+ * Authenticated, unlike the reset above: the current password is required even
+ * though a session already exists, because an unattended browser is the case
+ * that defends against.
+ *
+ * It answers with a fresh token pair and sets a new refresh cookie, because the
+ * change revokes every session including this one. Without putting those tokens
+ * into effect the caller would be signed out of the browser they are sitting in
+ * front of, which is why `useChangePassword` exists rather than a bare call.
+ */
+export function changePassword(body: {
+  currentPassword: string
+  newPassword: string
+}): Promise<AuthTokens> {
+  return api.post<AuthTokens>('/auth/password/change', body)
+}
+
+/**
+ * `POST /auth/logout-all`.
+ *
+ * Ends every session of this account, this browser's included, and clears the
+ * refresh cookie. There is no variant that spares the current one: that is what
+ * revoking a single session is for.
+ */
+export function logoutEverywhere(): Promise<void> {
+  return api.post<void>('/auth/logout-all')
+}

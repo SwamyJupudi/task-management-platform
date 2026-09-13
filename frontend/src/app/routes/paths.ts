@@ -95,6 +95,20 @@ export const paths = {
     settings: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.settings}`,
   },
 
+  /**
+   * Your own account, outside every workspace.
+   *
+   * Not under `/w/:workspaceSlug`, and for the same reason the admin panel is
+   * not: an account belongs to a person rather than to a tenant. Every endpoint
+   * behind these screens is gated on being signed in and nothing else, and none
+   * of them takes a workspace, so scoping the URL to one would misdescribe it.
+   */
+  account: {
+    root: '/account',
+    password: '/account/password',
+    sessions: '/account/sessions',
+  },
+
   admin: {
     root: '/admin',
     users: '/admin/users',

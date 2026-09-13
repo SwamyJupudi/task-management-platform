@@ -236,6 +236,59 @@ export function useLogout(): UseMutationResult<void, unknown, void> {
 }
 
 /**
+ * Changes the password, and keeps this browser signed in.
+ *
+ * The endpoint revokes every session — this one included — and hands back a
+ * fresh pair so the person changing their password is not thrown out of the
+ * browser they are using. `establishSession` is what makes that true: without
+ * it the store would still hold an access token the server has just revoked,
+ * and the next request would bounce to the sign-in screen.
+ *
+ * Every *other* session is gone afterwards, which is the point of the design
+ * and is why the screen says so before asking.
+ *
+ * The cache is cleared as well. Nothing in it is wrong, but a password change
+ * is the moment somebody expects a clean slate, and the sessions list in
+ * particular is now describing a world that no longer exists.
+ */
+export function useChangePassword(): UseMutationResult<
+  void,
+  unknown,
+  { currentPassword: string; newPassword: string }
+> {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (body) => {
+      const tokens: AuthTokens = await authApi.changePassword(body)
+      await establishSession(tokens)
+    },
+    onSuccess: () => {
+      queryClient.clear()
+    },
+  })
+}
+
+/**
+ * Ends every session of this account, including this one.
+ *
+ * The same shape as {@link useLogout} and for the same reason: the local half
+ * runs whether or not the server call succeeded, because somebody who asked to
+ * be signed out everywhere must not be left signed in here.
+ */
+export function useLogoutEverywhere(): UseMutationResult<void, unknown, void> {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: authApi.logoutEverywhere,
+    onSettled: () => {
+      endSession()
+      queryClient.clear()
+    },
+  })
+}
+
+/**
  * Puts a rejected request's field messages back on the fields that caused it.
  *
  * The backend answers a `VALIDATION_ERROR` with an `errors` array naming each
