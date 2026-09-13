@@ -10,8 +10,10 @@ import {
   VerifyEmailPage,
 } from '@/features/auth'
 import { DashboardPage } from '@/features/dashboard'
+import { PeoplePage } from '@/features/people'
 import { ProjectDetailPage, ProjectsPage } from '@/features/projects'
 import { TaskDetailPage, TasksPage } from '@/features/tasks'
+import { TeamDetailPage, TeamsPage } from '@/features/teams'
 import { ForbiddenPage } from '@/pages/forbidden-page'
 import { NotFoundPage } from '@/pages/not-found-page'
 import { PlaceholderPage } from '@/pages/placeholder-page'
@@ -90,12 +92,12 @@ export function AppRouter() {
             </Route>
 
             <Route element={<RequirePermission codes={['team:read']} />}>
-              <Route path={workspaceRoutes.teams} element={<PlaceholderPage title="Teams" />} />
-              <Route path={workspaceRoutes.team} element={<PlaceholderPage title="Team" />} />
+              <Route path={workspaceRoutes.teams} element={<TeamsPage />} />
+              <Route path={workspaceRoutes.team} element={<TeamDetailPage />} />
             </Route>
 
             <Route element={<RequirePermission codes={['user:read', 'member:read']} />}>
-              <Route path={workspaceRoutes.users} element={<PlaceholderPage title="People" />} />
+              <Route path={workspaceRoutes.users} element={<PeoplePage />} />
               <Route path={workspaceRoutes.user} element={<PlaceholderPage title="Person" />} />
             </Route>
 
