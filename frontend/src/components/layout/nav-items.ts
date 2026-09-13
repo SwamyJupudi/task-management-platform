@@ -1,5 +1,6 @@
 import {
   BellIcon,
+  BuildingIcon,
   ChartNoAxesColumnIcon,
   FolderKanbanIcon,
   GaugeIcon,
@@ -127,6 +128,12 @@ const platformItems: readonly NavItem[] = [
     to: () => paths.admin.users,
     icon: UserCogIcon,
     permissions: ['user:read'],
+  },
+  {
+    label: 'Workspaces',
+    to: () => paths.admin.workspaces,
+    icon: BuildingIcon,
+    permissions: ['workspace:read'],
   },
   {
     label: 'Roles',

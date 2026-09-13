@@ -112,6 +112,7 @@ export const paths = {
   admin: {
     root: '/admin',
     users: '/admin/users',
+    workspaces: '/admin/workspaces',
     roles: '/admin/roles',
     projects: '/admin/projects',
     teams: '/admin/teams',

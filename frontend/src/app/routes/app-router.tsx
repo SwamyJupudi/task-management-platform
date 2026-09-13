@@ -13,6 +13,7 @@ import {
 import {
   AccountsPage,
   AdminOverviewPage,
+  AdminWorkspacesPage,
   PlatformActivityPage,
   PlatformProjectsPage,
   PlatformTeamsPage,
@@ -37,6 +38,7 @@ import {
 } from '@/features/reports'
 import { TaskDetailPage, TasksPage } from '@/features/tasks'
 import { TeamDetailPage, TeamsPage } from '@/features/teams'
+import { WorkspaceSettingsPage } from '@/features/workspace'
 import { ForbiddenPage } from '@/pages/forbidden-page'
 import { NotFoundPage } from '@/pages/not-found-page'
 import { PlaceholderPage } from '@/pages/placeholder-page'
@@ -134,10 +136,11 @@ export function AppRouter() {
             </Route>
 
             <Route path={workspaceRoutes.notifications} element={<NotificationsPage />} />
-            <Route
-              path={workspaceRoutes.settings}
-              element={<PlaceholderPage title="Workspace settings" />}
-            />
+            {/* Every member may read the settings; only an administrator gets
+                the controls, which the screen decides rather than the router.
+                Gating the route on `workspace:update` would hide the timezone
+                from the people whose dates are computed in it. */}
+            <Route path={workspaceRoutes.settings} element={<WorkspaceSettingsPage />} />
           </Route>
         </Route>
 
@@ -169,6 +172,7 @@ export function AppRouter() {
           <Route element={<RequirePermission codes={['admin:read_system']} platform />}>
             <Route path={paths.admin.root} element={<AdminOverviewPage />} />
             <Route path={paths.admin.users} element={<AccountsPage />} />
+            <Route path={paths.admin.workspaces} element={<AdminWorkspacesPage />} />
             <Route path={paths.admin.roles} element={<RolesPage />} />
             <Route path={paths.admin.projects} element={<PlatformProjectsPage />} />
             <Route path={paths.admin.teams} element={<PlatformTeamsPage />} />

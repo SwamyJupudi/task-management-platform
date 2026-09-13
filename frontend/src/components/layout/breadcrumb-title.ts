@@ -60,6 +60,7 @@ export const pathTitles: Readonly<Record<string, string>> = {
   '/account/sessions': 'Sessions',
   '/admin': 'Admin',
   '/admin/users': 'Accounts',
+  '/admin/workspaces': 'Workspaces',
   '/admin/roles': 'Roles and permissions',
   '/admin/projects': 'All projects',
   '/admin/teams': 'All teams',

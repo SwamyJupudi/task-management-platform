@@ -197,6 +197,48 @@ export function workspaces(page: number, size: number): Promise<Page<WorkspaceSu
   return api.get<Page<WorkspaceSummary>>('/workspaces', { params: { page, size } })
 }
 
+/**
+ * `POST /workspaces`. Needs `workspace:create` on the platform.
+ *
+ * Seeds the three workspace roles and sets `EMPLOYEE` as the default in the same
+ * transaction. A slug already in use answers 409; one that is not lowercase
+ * words separated by single hyphens answers 400 naming the field.
+ *
+ * **It does not make the caller a member.** No membership row is written, so the
+ * new workspace does not appear in `/auth/me` and `/w/{slug}` stays unreachable
+ * for its own creator until somebody joins it. The screen says so and offers the
+ * invitation that fixes it.
+ */
+export function createWorkspace(body: { name: string; slug: string }): Promise<WorkspaceSummary> {
+  return api.post<WorkspaceSummary>('/workspaces', body)
+}
+
+/**
+ * `DELETE /workspaces/{id}`. Needs `workspace:delete` on the platform.
+ *
+ * Soft, and the slug becomes available again. Deliberately not something a
+ * workspace administrator can do to their own workspace: the code is granted to
+ * no workspace role.
+ */
+export function deleteWorkspace(workspaceId: string): Promise<void> {
+  return api.delete<void>(`/workspaces/${workspaceId}`)
+}
+
+/**
+ * `POST /workspaces/{id}/invitations`. Needs `member:invite`, which a platform
+ * role satisfies for any workspace.
+ *
+ * Here for one reason: a workspace's creator is not in it, and inviting
+ * themselves is the only route in that uses an endpoint that already exists.
+ * The people feature owns invitations properly — the list, the withdrawal, the
+ * roster — and this does not reach into it for one call, because that would
+ * make a screen in this panel depend on the internals of a workspace-scoped
+ * feature it otherwise has nothing to do with.
+ */
+export function inviteToWorkspace(workspaceId: string, email: string): Promise<unknown> {
+  return api.post<unknown>(`/workspaces/${workspaceId}/invitations`, { email })
+}
+
 /** `GET /permissions`. The global catalog, written by migrations. Needs `permission:read`. */
 export function permissionCatalog(): Promise<PermissionEntry[]> {
   return api.get<PermissionEntry[]>('/permissions')

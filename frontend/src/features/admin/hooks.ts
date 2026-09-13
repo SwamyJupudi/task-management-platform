@@ -65,6 +65,8 @@ export interface AdminPermissions {
   /** Both codes, because the platform trail insists on both. */
   canReadPlatformActivity: boolean
   canListWorkspaces: boolean
+  canCreateWorkspaces: boolean
+  canDeleteWorkspaces: boolean
   canReadRoles: boolean
   canManageRoles: boolean
   canReadPermissionCatalog: boolean
@@ -83,6 +85,8 @@ export function useAdminPermissions(): AdminPermissions {
     canAssignPlatformRole: hasOnPlatform('platform_role:assign'),
     canReadPlatformActivity: hasAllOnPlatform(['admin:read_system', 'activity:read']),
     canListWorkspaces: hasOnPlatform('workspace:read'),
+    canCreateWorkspaces: hasOnPlatform('workspace:create'),
+    canDeleteWorkspaces: hasOnPlatform('workspace:delete'),
     canReadRoles: hasOnPlatform('role:read'),
     canManageRoles: hasOnPlatform('role:manage'),
     canReadPermissionCatalog: hasOnPlatform('permission:read'),
@@ -180,6 +184,63 @@ export function useWorkspaceOptions(): UseQueryResult<WorkspaceSummary[]> {
     enabled: canListWorkspaces,
     staleTime: 5 * 60_000,
   })
+}
+
+/**
+ * Every workspace in the installation, paged.
+ *
+ * Separate from {@link useWorkspaceOptions}, which fetches one page of a hundred
+ * to fill a dropdown. Sharing a key between them would make the pickers on the
+ * roles and teams screens jump to whatever page this listing was last on.
+ */
+export function useWorkspaces(page: number): UseQueryResult<Page<WorkspaceSummary>> {
+  const { canListWorkspaces } = useAdminPermissions()
+
+  return useQuery({
+    queryKey: [...adminRoot, 'workspaces', 'list', page],
+    queryFn: () => adminApi.workspaces(page, PAGE_SIZE),
+    enabled: canListWorkspaces,
+    staleTime: STALE_MS,
+    placeholderData: (previous) => previous,
+  })
+}
+
+/**
+ * Creating and removing workspaces, and the invitation that follows creation.
+ *
+ * Creating one does not join it, so the two are offered together rather than
+ * the screen pretending otherwise. The invitation is an ordinary one: it goes
+ * to the address, and accepting it is what writes the membership row.
+ *
+ * The whole admin root is invalidated on a write. A new or removed workspace
+ * moves the statistics, the pickers on two other screens and this listing, and
+ * one broad invalidation cannot be wrong about which.
+ */
+export function useWorkspaceMutations() {
+  const queryClient = useQueryClient()
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin })
+  }
+
+  const create = useMutation({
+    mutationFn: (body: { name: string; slug: string }) => adminApi.createWorkspace(body),
+    onSuccess: invalidate,
+  })
+
+  const remove = useMutation({
+    mutationFn: (workspaceId: string) => adminApi.deleteWorkspace(workspaceId),
+    onSuccess: invalidate,
+  })
+
+  // No invalidation: an invitation changes nothing this panel displays. It is
+  // the people screen inside that workspace that lists them.
+  const inviteSelf = useMutation({
+    mutationFn: ({ workspaceId, email }: { workspaceId: string; email: string }) =>
+      adminApi.inviteToWorkspace(workspaceId, email),
+  })
+
+  return { create, remove, inviteSelf }
 }
 
 /**
