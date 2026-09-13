@@ -4,10 +4,13 @@ The React interface for the internal task and project management platform.
 It talks to the Spring backend in this same repository and has no server of
 its own.
 
-The routing, layout, API client, stores and configuration are in place, and
-`src/features/auth` is built: sign-in, registration, email verification,
-password recovery, session restore and the route guards. The remaining feature
-folders under `src/features` are empty and are later phases.
+The routing, API client, stores and configuration are in place;
+`src/features/auth` is built — sign-in, registration, email verification,
+password recovery, session restore and the route guards — and so is the
+authenticated application shell: the workspace-scoped route structure, the
+sidebar and drawer, the header, the workspace switcher, the account menu, the
+notification entry and the breadcrumbs. The remaining feature folders under
+`src/features` hold placeholders and are later phases.
 
 ## Stack
 
@@ -57,9 +60,9 @@ src/
 ├── config/        Typed, validated environment
 ├── features/      One folder per feature, per section 23 of the requirements
 │   └── auth/      Session lifecycle, the five auth screens, guarded routing
-├── hooks/         Cross-feature hooks: permissions, theme
+├── hooks/         Cross-feature hooks: permissions, active workspace, theme
 ├── lib/           API client and error model, TanStack Query setup
-├── pages/         Standalone pages: 403, 404, placeholders
+├── pages/         Standalone pages: 403, 404, no workspace, placeholders
 ├── stores/        Zustand: session and permissions, interface preferences
 └── types/         Shared wire types
 ```
@@ -83,6 +86,39 @@ session, the permission set and interface preferences live in Zustand.
 Errors shown to a user always come from `toUserMessage`, which returns the
 backend's own user-facing wording for a deliberate error and one generic
 line for anything else. Internal detail is never rendered.
+
+## Routing and the shell
+
+Everything a signed-in user reaches lives under `/w/:workspaceSlug`. The
+workspace is the tenant boundary the backend enforces on every query, so it
+belongs in the URL rather than only in a store: a link is then complete, it
+survives a reload and a bookmark, and two tabs can sit in two workspaces
+without fighting over one global "current workspace".
+
+`WorkspaceRoute` turns that slug into the session's active workspace, and it is
+the only thing that does. The switcher navigates and lets the route follow, so
+a pasted link, the back button and the menu all change workspaces the same way.
+A slug the session holds no membership for is rendered as not found, matching
+the backend, which answers 404 rather than 403 so a stranger cannot confirm a
+slug is real.
+
+The admin panel sits outside the workspace segment, at `/admin`. Its endpoints
+are gated on a platform role and take no workspace, so scoping its URL to one
+would misdescribe it.
+
+`AppLayout` is the shell. A rail from `md` upwards and a drawer below it both
+render the same `SidebarNav`, so an entry cannot exist in one and not the
+other, and both are filtered by the same permission checks. The error boundary
+and the Suspense fallback sit inside the shell, so a failed or still-loading
+screen keeps its navigation.
+
+The workspace switcher reads the membership list `GET /auth/me` already
+returned and makes no request of its own: `GET /workspaces` is gated on the
+platform permission `workspace:read`, which an ordinary employee does not hold.
+
+Breadcrumbs are derived from the path, because the router is the component form
+rather than a data router and route handles are not available. A screen that
+loads a record names its own final crumb through `useSetBreadcrumbTitle`.
 
 ## Authentication
 

@@ -75,7 +75,10 @@ export function RequireAnonymous({ children }: RequireAuthProps) {
 
   if (status === 'authenticated') {
     const from = (location.state as { from?: Location } | null)?.from
-    const intended = from ? `${from.pathname}${from.search}${from.hash}` : paths.app.dashboard
+    // `paths.root` rather than a dashboard: which workspace's dashboard that
+    // is depends on the memberships, and `WorkspaceIndexRedirect` is the one
+    // place that decides.
+    const intended = from ? `${from.pathname}${from.search}${from.hash}` : paths.root
     return <Navigate to={intended} replace />
   }
 

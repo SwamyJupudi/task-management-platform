@@ -4,7 +4,44 @@
  * Links are built from these rather than from string literals, so renaming a
  * route is a change here instead of a search across the codebase, and a typo
  * is a type error rather than a dead link.
+ *
+ * Almost everything a signed-in user reaches lives under `/w/:workspaceSlug`.
+ * The workspace is the tenant boundary the backend enforces on every query, so
+ * putting it in the URL rather than only in a store means a link is complete:
+ * it survives a reload, a bookmark and a paste into somebody else's chat
+ * window, and two tabs can sit in two different workspaces without fighting
+ * over one global "current workspace".
+ *
+ * The admin panel is the exception. It is gated on a platform role and its
+ * endpoints take no workspace, so scoping it to one would be a lie.
  */
+
+/** Slugs come from the API, but they are still interpolated into a URL. */
+const workspaceRoot = (slug: string) => `/w/${encodeURIComponent(slug)}`
+
+/**
+ * The child paths the router declares, relative to `/w/:workspaceSlug`.
+ *
+ * Kept beside the builders below so a route and the link to it cannot drift
+ * apart. React Router ranks a static segment above a dynamic one, so
+ * `tasks/mine` is matched before `tasks/:taskId` whatever the order here.
+ */
+export const workspaceRoutes = {
+  dashboard: 'dashboard',
+  projects: 'projects',
+  project: 'projects/:projectId',
+  tasks: 'tasks',
+  myTasks: 'tasks/mine',
+  task: 'tasks/:taskId',
+  teams: 'teams',
+  team: 'teams/:teamId',
+  users: 'users',
+  user: 'users/:userId',
+  notifications: 'notifications',
+  reports: 'reports',
+  settings: 'settings',
+} as const
+
 export const paths = {
   root: '/',
 
@@ -17,25 +54,33 @@ export const paths = {
     acceptInvitation: '/invitations/accept',
   },
 
-  app: {
-    dashboard: '/dashboard',
+  /** The pattern the router declares. Not a link target: it has no slug in it. */
+  workspacePattern: '/w/:workspaceSlug',
 
-    projects: '/projects',
-    project: (projectId: string) => `/projects/${projectId}`,
+  workspace: {
+    root: workspaceRoot,
+    dashboard: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.dashboard}`,
 
-    tasks: '/tasks',
-    task: (taskId: string) => `/tasks/${taskId}`,
-    myTasks: '/tasks/mine',
+    projects: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.projects}`,
+    project: (slug: string, projectId: string) =>
+      `${workspaceRoot(slug)}/${workspaceRoutes.projects}/${projectId}`,
 
-    teams: '/teams',
-    team: (teamId: string) => `/teams/${teamId}`,
+    tasks: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.tasks}`,
+    myTasks: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.myTasks}`,
+    task: (slug: string, taskId: string) =>
+      `${workspaceRoot(slug)}/${workspaceRoutes.tasks}/${taskId}`,
 
-    users: '/users',
-    user: (userId: string) => `/users/${userId}`,
+    teams: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.teams}`,
+    team: (slug: string, teamId: string) =>
+      `${workspaceRoot(slug)}/${workspaceRoutes.teams}/${teamId}`,
 
-    notifications: '/notifications',
-    reports: '/reports',
-    settings: '/settings',
+    users: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.users}`,
+    user: (slug: string, userId: string) =>
+      `${workspaceRoot(slug)}/${workspaceRoutes.users}/${userId}`,
+
+    notifications: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.notifications}`,
+    reports: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.reports}`,
+    settings: (slug: string) => `${workspaceRoot(slug)}/${workspaceRoutes.settings}`,
   },
 
   admin: {

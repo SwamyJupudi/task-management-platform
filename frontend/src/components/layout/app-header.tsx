@@ -1,100 +1,56 @@
-import { LogOutIcon, MonitorIcon, MoonIcon, PanelLeftIcon, SunIcon } from 'lucide-react'
+import { MenuIcon, PanelLeftIcon } from 'lucide-react'
 
+import { NotificationsButton } from '@/features/notifications'
+import { useUiStore } from '@/stores/ui-store'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { env } from '@/config/env'
-import { useLogout } from '@/features/auth'
-import { useSessionStore } from '@/stores/session-store'
-import { useUiStore, type Theme } from '@/stores/ui-store'
 
-const themeOrder: readonly Theme[] = ['system', 'light', 'dark']
-const themeIcon = { system: MonitorIcon, light: SunIcon, dark: MoonIcon } as const
-
-function ThemeToggle() {
-  const theme = useUiStore((state) => state.theme)
-  const setTheme = useUiStore((state) => state.setTheme)
-  const Icon = themeIcon[theme]
-
-  const next = themeOrder[(themeOrder.indexOf(theme) + 1) % themeOrder.length] ?? 'system'
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={() => setTheme(next)}
-      aria-label={`Theme: ${theme}. Switch to ${next}.`}
-    >
-      <Icon className="size-4" aria-hidden="true" />
-    </Button>
-  )
-}
-
-/**
- * Ends the session and returns to the sign-in screen.
- *
- * No navigation of its own: clearing the session flips the store to
- * `anonymous`, and `RequireAuth` redirects. One redirect, in one place.
- */
-function SignOutButton() {
-  const logout = useLogout()
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={() => logout.mutate()}
-      disabled={logout.isPending}
-      aria-label="Sign out"
-    >
-      <LogOutIcon className="size-4" aria-hidden="true" />
-    </Button>
-  )
-}
+import { Breadcrumbs } from './breadcrumbs'
+import { UserMenu } from './user-menu'
 
 /**
  * The application bar.
  *
- * The workspace name comes from the session's membership list, so the header
- * needs no request of its own. The account menu and the workspace switcher
- * are left to the features that own them.
+ * Everything in it is either a way to move (the drawer trigger, the rail
+ * toggle, the trail) or a way to reach something that belongs to the person
+ * rather than to the screen (notifications, the account menu). Nothing about
+ * the current screen's content is here; that belongs to the screen, through
+ * `PageHeader`.
+ *
+ * Sticky, because the account menu and the sign-out inside it should not
+ * require scrolling a long board back to the top to reach.
  */
-export function AppHeader() {
+export function AppHeader({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
+  const collapsed = useUiStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useUiStore((state) => state.toggleSidebar)
-  const memberships = useSessionStore((state) => state.memberships)
-  const activeWorkspaceId = useSessionStore((state) => state.activeWorkspaceId)
-  const user = useSessionStore((state) => state.user)
-
-  const workspace = memberships.find((m) => m.workspaceId === activeWorkspaceId)
 
   return (
-    <header className="bg-background border-border sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b px-4">
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur-sm md:px-6">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden"
+        onClick={onOpenMobileNav}
+        aria-label="Open the navigation"
+      >
+        <MenuIcon className="size-4" aria-hidden="true" />
+      </Button>
+
       <Button
         variant="ghost"
         size="icon"
         className="hidden md:inline-flex"
         onClick={toggleSidebar}
-        aria-label="Toggle the navigation rail"
+        aria-label={collapsed ? 'Expand the navigation rail' : 'Collapse the navigation rail'}
+        aria-pressed={collapsed}
       >
         <PanelLeftIcon className="size-4" aria-hidden="true" />
       </Button>
 
-      <span className="text-sm font-semibold">{env.appName}</span>
+      <Breadcrumbs className="min-w-0" />
 
-      {workspace ? (
-        <>
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          <span className="text-muted-foreground truncate text-sm">{workspace.workspaceName}</span>
-        </>
-      ) : null}
-
-      <div className="ml-auto flex items-center gap-1">
-        {user ? (
-          <span className="text-muted-foreground hidden truncate text-sm sm:inline">
-            {user.firstName} {user.lastName}
-          </span>
-        ) : null}
-        <ThemeToggle />
-        <SignOutButton />
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <NotificationsButton />
+        <UserMenu />
       </div>
     </header>
   )

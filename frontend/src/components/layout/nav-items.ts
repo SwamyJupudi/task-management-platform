@@ -4,6 +4,7 @@ import {
   FolderKanbanIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
+  SettingsIcon,
   ShieldIcon,
   UsersIcon,
   UsersRoundIcon,
@@ -18,57 +19,70 @@ import { paths } from '@/app/routes/paths'
  * Each entry names the permission codes that make it worth showing. The
  * sidebar filters on them, so a user is not offered a screen the API would
  * refuse. An entry with no codes is visible to anyone with a session.
+ *
+ * `to` is a function of the workspace slug rather than a string, because every
+ * destination inside a workspace is scoped to it. The platform section ignores
+ * its argument: the admin panel belongs to no workspace.
  */
 export interface NavItem {
   label: string
-  to: string
+  to: (workspaceSlug: string) => string
   icon: LucideIcon
   /** Any one of these is enough. Empty means no permission needed. */
   permissions: readonly string[]
-  /** Restricts the entry to accounts holding a platform role. */
+  /**
+   * Match this path exactly rather than as a prefix.
+   *
+   * Set on entries whose children are separate destinations, so that opening
+   * one project does not leave two rail entries looking active at once.
+   */
+  end?: boolean
+}
+
+export interface NavSection {
+  id: string
+  /** Rendered as the group heading, and as the rail's accessible label. */
+  label: string
+  items: readonly NavItem[]
+  /** Restricts the whole section to accounts holding a platform role. */
   platformOnly?: boolean
 }
 
-export const primaryNav: readonly NavItem[] = [
+const workspaceItems: readonly NavItem[] = [
   {
     label: 'Dashboard',
-    to: paths.app.dashboard,
+    to: paths.workspace.dashboard,
     icon: LayoutDashboardIcon,
     permissions: [],
+    end: true,
   },
   {
     label: 'Projects',
-    to: paths.app.projects,
+    to: paths.workspace.projects,
     icon: FolderKanbanIcon,
     permissions: ['project:read', 'project:read_any'],
   },
   {
     label: 'Tasks',
-    to: paths.app.tasks,
+    to: paths.workspace.tasks,
     icon: ListChecksIcon,
     permissions: ['task:read'],
   },
   {
     label: 'Teams',
-    to: paths.app.teams,
+    to: paths.workspace.teams,
     icon: UsersRoundIcon,
     permissions: ['team:read'],
   },
   {
     label: 'People',
-    to: paths.app.users,
+    to: paths.workspace.users,
     icon: UsersIcon,
     permissions: ['user:read', 'member:read'],
   },
   {
-    label: 'Notifications',
-    to: paths.app.notifications,
-    icon: BellIcon,
-    permissions: [],
-  },
-  {
     label: 'Reports',
-    to: paths.app.reports,
+    to: paths.workspace.reports,
     icon: ChartNoAxesColumnIcon,
     // The reports module has no permission code of its own: ReportAccessGuard
     // gates on task:read and narrows the aggregate by what the caller can see.
@@ -76,14 +90,39 @@ export const primaryNav: readonly NavItem[] = [
   },
 ]
 
-export const adminNav: readonly NavItem[] = [
+const workspaceAccountItems: readonly NavItem[] = [
+  {
+    label: 'Notifications',
+    to: paths.workspace.notifications,
+    icon: BellIcon,
+    permissions: [],
+  },
+  {
+    label: 'Settings',
+    to: paths.workspace.settings,
+    icon: SettingsIcon,
+    permissions: [],
+  },
+]
+
+const platformItems: readonly NavItem[] = [
   {
     label: 'Admin',
-    to: paths.admin.root,
+    to: () => paths.admin.root,
     icon: ShieldIcon,
     // Gated on the platform role rather than a code; the admin endpoints use
     // @perm.onPlatform('admin:read_system'), which only a platform role holds.
     permissions: [],
-    platformOnly: true,
   },
+]
+
+/** Sections scoped to a workspace. Hidden entirely when there is not one. */
+export const workspaceNav: readonly NavSection[] = [
+  { id: 'workspace', label: 'Workspace', items: workspaceItems },
+  { id: 'account', label: 'You', items: workspaceAccountItems },
+]
+
+/** Sections that belong to the platform rather than to any one workspace. */
+export const platformNav: readonly NavSection[] = [
+  { id: 'platform', label: 'Platform', items: platformItems, platformOnly: true },
 ]
