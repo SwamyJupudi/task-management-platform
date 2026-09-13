@@ -58,7 +58,9 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
 }
 
 function buildUrl(path: string, params?: QueryParams): string {
-  const base = path.startsWith('http') ? path : `${env.apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`
+  const base = path.startsWith('http')
+    ? path
+    : `${env.apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`
   if (!params) return base
 
   const search = new URLSearchParams()
@@ -176,7 +178,14 @@ async function parse<T>(response: Response): Promise<T> {
   return JSON.parse(text) as T
 }
 
-async function request<T>(path: string, method: string, options: RequestOptions = {}): Promise<T> {
+/**
+ * Sends, renews a dead session once, and turns a failure into an `ApiError`.
+ *
+ * Everything that talks to the API funnels through here, whether it wants the
+ * body parsed or the response itself. Keeping the retry in one place is what
+ * stops a second way of calling the API from quietly missing it.
+ */
+async function exchange(path: string, method: string, options: RequestOptions): Promise<Response> {
   let response = await send(path, method, options)
 
   // One retry, and only for an expired session on a call that carried one.
@@ -190,7 +199,11 @@ async function request<T>(path: string, method: string, options: RequestOptions 
   }
 
   if (!response.ok) throw await toApiError(response)
-  return parse<T>(response)
+  return response
+}
+
+async function request<T>(path: string, method: string, options: RequestOptions = {}): Promise<T> {
+  return parse<T>(await exchange(path, method, options))
 }
 
 export const api = {
@@ -202,4 +215,16 @@ export const api = {
   patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(path, 'PATCH', { ...options, ...(body === undefined ? {} : { body }) }),
   delete: <T>(path: string, options?: RequestOptions) => request<T>(path, 'DELETE', options ?? {}),
+
+  /**
+   * The response itself, for the few endpoints that do not answer JSON.
+   *
+   * A file download is the case this exists for. It carries the bearer token
+   * like every other call, which a plain anchor could not, and it goes through
+   * the same retry-on-401 as everything else rather than being a second way
+   * into the API that quietly misses it.
+   *
+   * The caller reads the body; nothing here parses it.
+   */
+  raw: (path: string, options?: RequestOptions) => exchange(path, 'GET', options ?? {}),
 } as const

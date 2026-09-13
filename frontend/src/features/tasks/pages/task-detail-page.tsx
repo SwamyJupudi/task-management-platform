@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { CollaborationPanel } from '@/features/collaboration'
 import { useActiveWorkspace } from '@/hooks/use-active-workspace'
 import { toUserMessage } from '@/lib/api'
 
@@ -213,6 +214,8 @@ export function TaskDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <CollaborationPanel taskId={data.id} projectId={data.projectId} ownsProject={ownsProject} />
 
       <TaskFormDialog open={editing} onOpenChange={setEditing} task={data} />
     </div>
