@@ -56,10 +56,11 @@ export function useSetBreadcrumbTitle(label: string | null | undefined): void {
  */
 export const pathTitles: Readonly<Record<string, string>> = {
   '/admin': 'Admin',
-  '/admin/users': 'User management',
+  '/admin/users': 'Accounts',
   '/admin/roles': 'Roles and permissions',
-  '/admin/activity': 'Activity log',
-  '/admin/statistics': 'System statistics',
+  '/admin/projects': 'All projects',
+  '/admin/teams': 'All teams',
+  '/admin/activity': 'Platform activity',
 }
 
 /**

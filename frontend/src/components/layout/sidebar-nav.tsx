@@ -65,13 +65,19 @@ function NavEntry({ item, collapsed, onNavigate }: { item: NavItem } & NavProps)
 }
 
 function Section({ section, collapsed, onNavigate }: { section: NavSection } & NavProps) {
-  const { hasAny } = usePermissions()
+  const { hasAny, hasAnyOnPlatform } = usePermissions()
   const isPlatformAdmin = useIsPlatformAdmin()
 
   if (section.platformOnly && !isPlatformAdmin) return null
 
+  // A platform section asks the platform-scoped question, matching how its
+  // endpoints are gated. Several of the codes it names are also held by the
+  // seeded workspace administrator, so the union would list screens the API
+  // answers 403 to.
+  const grants = section.platformOnly ? hasAnyOnPlatform : hasAny
+
   const visible = section.items.filter(
-    (item) => item.permissions.length === 0 || hasAny(item.permissions),
+    (item) => item.permissions.length === 0 || grants(item.permissions),
   )
   if (visible.length === 0) return null
 

@@ -99,7 +99,10 @@ export const paths = {
     root: '/admin',
     users: '/admin/users',
     roles: '/admin/roles',
+    projects: '/admin/projects',
+    teams: '/admin/teams',
     activity: '/admin/activity',
+    /** Kept so older links still work; it redirects to the panel's own root. */
     statistics: '/admin/statistics',
   },
 

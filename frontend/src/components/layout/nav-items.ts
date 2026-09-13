@@ -2,10 +2,13 @@ import {
   BellIcon,
   ChartNoAxesColumnIcon,
   FolderKanbanIcon,
+  GaugeIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
+  ScrollTextIcon,
   SettingsIcon,
   ShieldIcon,
+  UserCogIcon,
   UsersIcon,
   UsersRoundIcon,
   type LucideIcon,
@@ -23,6 +26,12 @@ import { paths } from '@/app/routes/paths'
  * `to` is a function of the workspace slug rather than a string, because every
  * destination inside a workspace is scoped to it. The platform section ignores
  * its argument: the admin panel belongs to no workspace.
+ *
+ * The codes on a platform entry are asked platform-wide rather than on the
+ * union, because that is how the endpoints behind them are gated. Several of
+ * them — `user:read`, `role:read`, `team:read` — are also held by the seeded
+ * workspace administrator, so asking the union here would put the admin panel
+ * in the sidebar of somebody the API would refuse.
  */
 export interface NavItem {
   label: string
@@ -107,12 +116,41 @@ const workspaceAccountItems: readonly NavItem[] = [
 
 const platformItems: readonly NavItem[] = [
   {
-    label: 'Admin',
+    label: 'Overview',
     to: () => paths.admin.root,
+    icon: GaugeIcon,
+    permissions: ['admin:read_system'],
+    end: true,
+  },
+  {
+    label: 'Accounts',
+    to: () => paths.admin.users,
+    icon: UserCogIcon,
+    permissions: ['user:read'],
+  },
+  {
+    label: 'Roles',
+    to: () => paths.admin.roles,
     icon: ShieldIcon,
-    // Gated on the platform role rather than a code; the admin endpoints use
-    // @perm.onPlatform('admin:read_system'), which only a platform role holds.
-    permissions: [],
+    permissions: ['role:read'],
+  },
+  {
+    label: 'All projects',
+    to: () => paths.admin.projects,
+    icon: FolderKanbanIcon,
+    permissions: ['admin:read_system'],
+  },
+  {
+    label: 'All teams',
+    to: () => paths.admin.teams,
+    icon: UsersRoundIcon,
+    permissions: ['team:read'],
+  },
+  {
+    label: 'Audit log',
+    to: () => paths.admin.activity,
+    icon: ScrollTextIcon,
+    permissions: ['activity:read'],
   },
 ]
 

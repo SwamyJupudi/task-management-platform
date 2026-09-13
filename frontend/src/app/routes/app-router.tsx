@@ -9,6 +9,14 @@ import {
   ResetPasswordPage,
   VerifyEmailPage,
 } from '@/features/auth'
+import {
+  AccountsPage,
+  AdminOverviewPage,
+  PlatformActivityPage,
+  PlatformProjectsPage,
+  PlatformTeamsPage,
+  RolesPage,
+} from '@/features/admin'
 import { DashboardPage } from '@/features/dashboard'
 import { PeoplePage } from '@/features/people'
 import { NotificationsPage } from '@/features/notifications'
@@ -130,21 +138,32 @@ export function AppRouter() {
           </Route>
         </Route>
 
-        {/* The admin panel. Every endpoint behind it is gated on a platform
-            permission, which only a platform role holds, and none of them takes
-            a workspace — hence no workspace segment in the path. */}
+        {/* The admin panel, outside every workspace and staying that way. Its
+            endpoints are gated by `@perm.onPlatform`, which reads the caller's
+            platform role and never consults workspace membership, and none of
+            them takes a workspace as an authorization input — hence no
+            workspace segment in the path.
+
+            `platform` on the guard asks the same narrow question. The ordinary
+            check answers on the union of platform and workspace grants, and a
+            workspace administrator holds several of the codes used below inside
+            their own workspace, so the union would open a door the API keeps
+            shut. `admin:read_system` is granted to no workspace role, which
+            makes it the right gate for the panel as a whole; each screen then
+            re-checks the codes its own endpoints need. */}
         <Route element={<AppLayout />}>
-          <Route element={<RequirePermission codes={['admin:read_system']} />}>
-            <Route path={paths.admin.root} element={<PlaceholderPage title="Admin" />} />
-            <Route path={paths.admin.users} element={<PlaceholderPage title="User management" />} />
-            <Route
-              path={paths.admin.roles}
-              element={<PlaceholderPage title="Roles and permissions" />}
-            />
-            <Route path={paths.admin.activity} element={<PlaceholderPage title="Activity log" />} />
+          <Route element={<RequirePermission codes={['admin:read_system']} platform />}>
+            <Route path={paths.admin.root} element={<AdminOverviewPage />} />
+            <Route path={paths.admin.users} element={<AccountsPage />} />
+            <Route path={paths.admin.roles} element={<RolesPage />} />
+            <Route path={paths.admin.projects} element={<PlatformProjectsPage />} />
+            <Route path={paths.admin.teams} element={<PlatformTeamsPage />} />
+            <Route path={paths.admin.activity} element={<PlatformActivityPage />} />
+            {/* The statistics are the panel's own root rather than a screen of
+                their own. Kept as a redirect so a bookmark still lands. */}
             <Route
               path={paths.admin.statistics}
-              element={<PlaceholderPage title="System statistics" />}
+              element={<Navigate to={paths.admin.root} replace />}
             />
           </Route>
         </Route>

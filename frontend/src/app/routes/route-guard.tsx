@@ -44,15 +44,33 @@ interface RequirePermissionProps {
   codes: readonly string[]
   /** When true the user needs every code rather than any one of them. */
   requireAll?: boolean
+  /**
+   * Ask whether a *platform* role grants these, ignoring workspace grants.
+   *
+   * Set on the admin panel, and nowhere else. Its endpoints are gated by
+   * `@perm.onPlatform`, which never consults workspace membership, and several
+   * of the codes it uses are also held by the seeded workspace administrator —
+   * so the ordinary union check would let somebody through a door the API keeps
+   * shut.
+   */
+  platform?: boolean
   children?: ReactNode
 }
 
-export function RequirePermission({ codes, requireAll = false, children }: RequirePermissionProps) {
-  const { hasAll, hasAny, ready } = usePermissions()
+export function RequirePermission({
+  codes,
+  requireAll = false,
+  platform = false,
+  children,
+}: RequirePermissionProps) {
+  const { hasAll, hasAny, hasAllOnPlatform, hasAnyOnPlatform, ready } = usePermissions()
 
   if (!ready) return <FullPageSpinner label="Checking your access" />
 
-  const permitted = requireAll ? hasAll(codes) : hasAny(codes)
+  const all = platform ? hasAllOnPlatform : hasAll
+  const any = platform ? hasAnyOnPlatform : hasAny
+
+  const permitted = requireAll ? all(codes) : any(codes)
   if (!permitted) return <Navigate to={paths.forbidden} replace />
 
   return children ? <>{children}</> : <Outlet />
