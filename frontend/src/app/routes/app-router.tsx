@@ -11,6 +11,7 @@ import {
 } from '@/features/auth'
 import { DashboardPage } from '@/features/dashboard'
 import { PeoplePage } from '@/features/people'
+import { NotificationsPage } from '@/features/notifications'
 import { ProjectDetailPage, ProjectsPage } from '@/features/projects'
 import { TaskDetailPage, TasksPage } from '@/features/tasks'
 import { TeamDetailPage, TeamsPage } from '@/features/teams'
@@ -101,10 +102,7 @@ export function AppRouter() {
               <Route path={workspaceRoutes.user} element={<PlaceholderPage title="Person" />} />
             </Route>
 
-            <Route
-              path={workspaceRoutes.notifications}
-              element={<PlaceholderPage title="Notifications" />}
-            />
+            <Route path={workspaceRoutes.notifications} element={<NotificationsPage />} />
             <Route
               path={workspaceRoutes.settings}
               element={<PlaceholderPage title="Workspace settings" />}
