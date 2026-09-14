@@ -111,10 +111,13 @@ projects they belong to. An admin holding the same permission plus the
 workspace-wide grant may touch any task in the workspace.
 
 The resolved permission set is read from the database on the requests that need
-it. Caching it is deliberately deferred. A membership change, a role change and a
-deactivation must take effect at once, and a cache held inside one process is
-already wrong the moment a second instance starts. When the read cost justifies
-it, the answer is a shared cache in the hardening phase, not a local one now.
+it and is **never cached**. A membership change, a role change and a deactivation
+must take effect at once, and a cache held inside one process is already wrong the
+moment a second instance starts. The hardening phase introduced the shared store
+this once pointed at, and deliberately did not use it for this: Redis is there for
+rate-limit counters, caching is not switched on, and there is no `CacheManager` in
+the context for a `@Cacheable` to bind to. The rule is now enforced by the absence
+of the machinery rather than by anybody remembering it.
 
 Seeded roles: `SUPER_ADMIN` at platform scope, and `ADMIN`, `TEAM_LEAD`,
 `EMPLOYEE` per workspace. Custom workspace roles are a later capability; the
@@ -557,11 +560,15 @@ first and claimed by a comment when it is written, which keeps the upload a plai
 multipart request with no JSON part beside it; adoption refuses anything the caller
 did not upload, anything on another task, and anything already claimed.
 
-**Soft deleting an attachment does not delete the bytes.** Restoring is what soft
-deletion is for, and a restore that brought back a row pointing at nothing would be
-no restore. The purge that reclaims storage is hardening-phase work, beside the
-expired-token purge, and until it exists the store grows. Virus scanning is deferred
-to the same phase, where the requirements' own file-upload-security item sits.
+**Soft deleting an attachment does not delete the bytes straight away.** Restoring
+is what soft deletion is for, and a restore that brought back a row pointing at
+nothing would be no restore. `AttachmentBytePurge`, added in the hardening phase,
+reclaims the object once the row has been soft-deleted for longer than
+`app.storage.purge.retention` — so that setting is also the window in which a file
+deleted by mistake can still be recovered, and the purge is off until a deployment
+switches it on. Malware scanning arrived in the same phase and runs before anything
+is stored; downloads serve only files a scanner has cleared. See *Production
+hardening*.
 
 ### Activity and audit
 
@@ -1144,10 +1151,14 @@ read, it returns only the workspace name, the invited address and whether that
 address already has an account, and redeeming the invitation is a separate POST.
 The token is never written to a log on that path.
 
-Expired and consumed rows in `user_tokens` and `refresh_tokens` are not removed.
-Nothing reads them, and an expiry check is applied on every use, so they are
-inert rather than dangerous. The scheduled purge that reclaims the space belongs
-to the hardening phase, along with the scheduling support it needs.
+Expired and consumed rows in `user_tokens` and `refresh_tokens` are inert rather
+than dangerous — nothing reads them and an expiry check is applied on every use —
+but they used to accumulate for ever. `ExpiredTokenPurge`, added in the hardening
+phase, removes them in bounded batches once they have been **expired** for longer
+than `app.auth.token-purge.retention`. Expiry rather than consumption, and never
+revocation: a revoked refresh token must stay readable while it could still be
+presented, because presenting one is how a stolen rotation chain is discovered.
+The purge is off until a deployment switches it on.
 
 ### Transport
 
@@ -1222,9 +1233,11 @@ Escalating lock periods were considered and left out. The requirements ask for n
 such policy, and it would need a counter that survives the reset, which is state
 earning its keep only once there is evidence that fixed periods are insufficient.
 
-Address-level and gateway-level rate limiting stay in the hardening phase, where
-the build order already places them. No rate-limiting library is introduced for
-either.
+Address-level rate limiting arrived in the hardening phase, where the build order
+placed it, and still with no rate-limiting library: the whole mechanism is one
+atomic Lua script against Redis. Gateway-level limiting remains a deployment's own
+choice and `app.rate-limit.enabled=false` exists for a deployment that prefers to
+limit there instead. See *Production hardening* below.
 
 **Registering with an address that already has an account answers 409, and that
 is an accepted risk rather than an oversight.** Sign-in, forgotten password and
@@ -1238,7 +1251,10 @@ somebody their address is already in use.
 
 The condition attached to accepting it: **the hardening phase must rate-limit
 registration by address as well as by caller**, since bulk enumeration is the
-only form of this that matters.
+only form of this that matters. **Both halves shipped**, and the by-address one is
+consumed before the existence check rather than after it, which is the only
+ordering that closes anything — consumed after, the limit would bound the
+successful registrations and leave the disclosure unbounded.
 
 ### Module boundaries
 
@@ -1271,6 +1287,282 @@ address but no password or the reverse, startup fails and says which value is
 missing. Silently continuing would leave an operator believing they had an
 administrator when they did not.
 
+## Production hardening
+
+Phase ten. Nothing here is a feature; every part of it is something that has to
+be true before the platform faces the internet, and most of it was named as
+deferred work by an earlier phase.
+
+### Rate limiting, in two places on purpose
+
+Address-keyed limits are a servlet filter ordered ahead of the security chain.
+That position is the point rather than a detail: authentication is not free — a
+token is parsed and verified, an account status is read from the database, a
+password is compared against bcrypt at strength twelve — and all of it is work an
+unauthenticated caller can make the application do. A limit applied after
+authentication would bound the replies rather than the work.
+
+Account-keyed limits are **not** in the filter. The address being limited arrives
+in the request body, and reading a body in a filter consumes the stream, so every
+request in the application would need a caching wrapper — multipart uploads
+included — to let the controller read it again. That is a permanent cost on
+everything to avoid passing one string to a collaborator. `AccountRateLimitGuard`
+is called from the services instead, which already have the address parsed.
+
+Each account check is consumed **before** the work and before the answer that
+would disclose anything. For registration that is the whole value of it: this
+document accepted that registering with an address that already has an account
+answers 409, and therefore reveals that the address is registered, on the stated
+condition that the hardening phase limit registration by address as well as by
+caller. Both halves now exist, and the account half is consumed before the
+existence check, so an attacker gets a handful of answers about an address per
+hour rather than as many as they care to ask for.
+
+**The account limits are deliberately looser than the account lockout, and that
+looks backwards.** Five wrong passwords lock an account for fifteen minutes, and
+that lockout is the platform's answer to password guessing. If the per-account
+rate limit were also five, a 429 would arrive before the lockout was ever
+reached, and somebody mistyping their own password would be told to come back
+later instead of being told their account is locked. So the login limit sits at
+twice the lockout threshold: the lockout always speaks first and keeps its
+behaviour, and the limit catches only what the lockout cannot — somebody working
+through many accounts, or continuing past the point where the lockout has said
+what it has to say.
+
+A refusal is the platform's ordinary error body with a 429 and a `Retry-After`.
+One message for every limit: a message that distinguished "too many attempts
+against this account" from "too many requests from here" would confirm an address
+is registered to anybody willing to trip the limit.
+
+### Redis is a counter store, not a cache
+
+Redis holds the rate limiter's counters. A limit has to be the same limit on
+every instance or it is not a limit, and a counter is the one piece of state in
+this application that is worthless the moment it is a second old, which is what
+makes an in-memory store its right home rather than a table.
+
+**Caching is not switched on, and that is the important half of this decision.**
+There is no `@EnableCaching` anywhere and no `CacheManager` in the context. The
+standing rule is that a resolved permission set must never be cached — a
+membership change, a role change and a deactivation all have to take effect on
+the next request, and `PermissionResolver` carries that rule in its own contract.
+The easiest way to break it would be to leave cache infrastructure lying next to
+a resolver method that looks expensive. With none present there is no annotation
+to add and nothing for one to bind to, so the rule is enforced by the absence of
+the machinery rather than by review.
+
+**Redis unavailable means every request is allowed.** A rate limiter is a
+protection, and one that refuses everything when its own store is unreachable has
+converted a degraded dependency into a total outage. What is lost during a Redis
+outage is the protection, not the service. Two things make that real rather than
+nominal: the client timeouts are 250ms, and after a failure the limiter stops
+consulting Redis for thirty seconds — without the second, a store that was merely
+unreachable would add its timeout to every request in the application and the
+fail-open would be honoured while the service was unusable anyway. For the same
+reason the Redis health indicator is switched off: a dependency the application is
+designed to degrade past must not be able to fail a readiness probe and have a
+healthy instance pulled out of the load balancer.
+
+The counters are keyed by a **hash** of an email address, never the address.
+Redis keys appear in `MONITOR` output, in slow-log entries and on whatever
+dashboard a managed provider offers, and none of those are places this platform
+writes a customer's address.
+
+### Request completion logging
+
+One line per finished request: method, path, status, duration. Until it existed
+the logs recorded only failures, because the exception handler logs a rejection
+and nothing logged a success, which left the ordinary questions unanswerable.
+
+The **query string is deliberately absent.** An invitation is accepted through
+`GET /invitations?token=...`, so logging a full request line would write a live
+single-use credential into the logs, where it would outlive the token and be
+readable by anybody who can read logs. Health probes are logged at DEBUG rather
+than INFO: an orchestrator polls them every few seconds and at INFO they would be
+the overwhelming majority of the log.
+
+### Scheduled purges, and why they are off by default
+
+Three jobs, in the modules that own the data: expired tokens in `auth`, attachment
+objects and the unscanned-attachment backlog in `attachments`. The first two are
+nightly purges; the third is the hourly rescan described under *Malware scanning*.
+All are **off by default in every profile**,
+unlike the deadline scan, and the asymmetry with the deadline scan is deliberate — that sends
+a message, these delete data, so a deployment opts into destruction rather than
+discovering it has been running. The rescan destroys nothing but is off for a
+related reason: it reads every unscanned file out of object storage. All three
+must therefore be switched on explicitly in production, and without the two purges
+the token tables and the object store grow without bound.
+
+Both purges use thirty-day retention and bounded batches. The first run after
+either is enabled has the whole history to work through, and a single unbounded
+`DELETE` would hold locks on the busiest tables in the schema for as long as that
+took.
+
+Token retention is counted from **expiry**, not from issue, and the predicate is
+expiry rather than revocation. A revoked refresh token has to stay readable while
+it could still be presented, because presenting one is how a stolen rotation
+chain is discovered; a row deleted early would turn a detected replay into a
+lookup that finds nothing and merely refuses the caller, losing the signal that
+the whole session should be evicted.
+
+The attachment purge deletes **the object before the row, never the other way
+round.** A row deleted first leaves bytes in the store that nothing in the schema
+can name — unreachable, unattributable, still being paid for. An object deleted
+first leaves a row pointing at nothing, which the next run simply deletes, since
+every store reports an already-absent object as a success. One order is
+self-healing and the other loses data permanently. `FileStore.delete` carries the
+matching half of the contract and had to change to do so: both implementations
+used to log a failure and return, which reported success to a caller that then
+deleted the row. They now throw.
+
+`AdvisoryLock` moved from `notifications` to `common.scheduling` when the second
+job needed it, and the lock keys are in `LockKeys` because that class had always
+said a second key belonged beside the first rather than invented at a call site —
+they share one namespace across the database, and two jobs choosing
+plausible-looking constants could collide, with the symptom being one of them
+silently never running. `@EnableScheduling` moved to `common.scheduling` for the
+same reason: it had sat on `NotificationConfig` while the deadline scan was the
+only scheduled job, and that annotation's stated justification stopped being true
+once two other modules needed it.
+
+### Malware scanning
+
+`MalwareScanner` is a port, and being a port is the requirement rather than a
+design preference: naming a commercial engine here would put a licence, a vendor
+and an SDK dependency into the source, and would make the choice unreviewable.
+Two implementations ship. One scans nothing, for development and tests, and is
+refused at startup under `prod` — the same refusal `StorageConfig` applies to
+local disk, for the same reason, because a quiet fallback is how the rule gets
+broken. The other POSTs the bytes to a URL.
+
+**The upload lifecycle.** Size, then what the bytes actually are, then whether
+that is a type the platform accepts, then the scan, then the name. The scan is
+last of the content checks because it is the only one that leaves the process, so
+every cheap local refusal happens first and a file the platform would never
+accept is never sent anywhere. It runs **before anything is stored**, so an
+infected upload leaves no object and no row and nothing for a purge to find.
+Clean proceeds; infected answers 400 with a message that says the file was
+refused and nothing about what was found — naming the signature would hand an
+attacker an oracle for tuning a payload against the engine — and a scan that
+could not be completed answers 503 and refuses the upload. That last one is the
+fail-closed decision, and accepting the file instead would be the single choice
+that makes the whole feature pointless, because anybody who could take the scanner
+down could then upload anything.
+
+`attachments.scan_status` records the outcome, and downloads serve only `CLEAN`.
+The guard is written as "is it approved" rather than "is it rejected", so a state
+added later is refused by default rather than served by default. `PENDING` is where every
+attachment that predates this phase starts, and where anything an asynchronous
+engine has accepted but not yet cleared would sit; today's upload path never
+writes it, because that scans before it stores, so a file which cannot be cleared
+never becomes a row. `SCANNING` is reserved for an asynchronous adapter, which the
+download guard therefore already refuses — such an adapter is safe by
+construction rather than needing this method revisited. `REJECTED` is
+for the rejection an operator records after the fact, quarantining a file a later
+signature update flagged without deleting the record that it was there. Both
+download routes — the streamed one and the presigned redirect — pass through the
+same guard, so a file that is not clean can be listed and have its metadata read
+and still cannot be fetched.
+
+**`V12` leaves every existing row `PENDING`, and does not backfill them to
+`CLEAN`.** This was decided the other way round first and corrected, so the
+reasoning is worth keeping. Backfilling to `CLEAN` avoids a visible change —
+every existing file keeps downloading — but it writes a falsehood into the column
+whose entire purpose is to record whether something inspected a file. Nothing had
+inspected them. It is also a falsehood that gets harder to find with time: once a
+row says `CLEAN` the only thing distinguishing it from a genuinely cleared row is
+a null timestamp nobody is obliged to look at. A platform that scans uploads and
+serves an unscanned backlog as though it were scanned has the appearance of the
+control without the control.
+
+The database enforces this rather than trusting the code to: a check constraint
+requires `scanned_at` on any `CLEAN` row, so a backfill, a later migration or a
+stray `UPDATE` that tried to mark files clean without scanning them is refused
+outright. There are exactly two paths to `CLEAN` in the application —
+`Attachment.createScanned` after an upload scan passes, and
+`Attachment.markScanClean` after the rescan gets a clean verdict — and both stamp
+the timestamp in the same breath as the status.
+
+**What this costs an existing installation, stated plainly: every attachment
+becomes undownloadable until it has been scanned.** Rows, metadata and listings
+are untouched, because the guard is on the bytes rather than on the record, so
+nothing disappears from a task — the download answers 409 while the file is
+unscanned. `AttachmentRescan` is what clears that backlog: it reads each unscanned
+file back out of object storage, scans the bytes as they actually are, and either
+promotes it to `CLEAN` or marks it `REJECTED`. A file the scanner cannot reach
+stays `PENDING`, which is the fail-closed direction — an unreachable scanner must
+never be the reason something becomes servable. It is hourly rather than nightly,
+because a backlog is something an operator is waiting on, and it is off by
+default: it destroys nothing, but it reads every unscanned file out of the store
+and sends it to a scanner, which on a large backlog is a lot of egress arriving
+the moment a deployment restarts. **A deployment upgrading a populated
+installation has to switch it on**, and there is deliberately no shortcut that
+marks the backlog clean without looking at it.
+
+#### What a production deployment has to provide
+
+A scanning service reachable over HTTP from the application, satisfying this
+contract — small on purpose, because it is the part other people implement:
+
+- `POST` with the file as the body and `application/octet-stream`.
+  - `200 OK` — clean. The body is ignored.
+  - `422 Unprocessable Content` — infected. The first line of the body, trimmed
+    and truncated to 200 characters, is recorded as the signature; an empty body
+    is accepted and recorded as unnamed.
+  - **Anything else is an error**, including 5xx, a timeout, a connection failure,
+    and any 2xx that is not 200. The upload is refused rather than accepted
+    unscanned. A shim that answers something plausible but undocumented therefore
+    fails closed.
+- `GET` answers the startup probe. Anything that is not a 5xx counts as reachable,
+  so a shim implementing only `POST` may answer 405.
+
+A status code rather than a JSON verdict because a body would need a schema, this
+application would have to parse it, every shim would have to reproduce it, and the
+failure mode of getting it slightly wrong would be a file waved through. 422
+rather than 400 because the request was well formed; the content is the problem.
+
+No credential is read from configuration, matching object storage: a scanning
+endpoint needing authentication should be reached over a network the deployment
+controls, or fronted by a shim holding the credential itself.
+
+**What failing closed costs, stated plainly: the application cannot start while
+its scanner is down.** The scanner is a hard startup dependency under `prod`, so
+it must come up first, and a rolling restart during a scanner outage leaves
+instances unable to return until it comes back. There is deliberately no flag to
+relax the startup check, because a flag for it would be set once during an
+incident and never unset.
+
+### Headers, compression and container sizing
+
+Four headers were added to the four the foundation phase set. One writer produces
+the content security policy rather than two registrations, because a browser
+enforces the **intersection** of two policy headers rather than choosing between
+them, so a strict policy for the API and a looser one for the documentation
+console would give the console neither. The API policy is `default-src 'none'`,
+which costs nothing: every response but the console is JSON or a file served as
+an attachment, and none of it is a document a browser renders.
+
+`Cross-Origin-Resource-Policy: same-origin` was checked rather than assumed. It
+refuses cross-origin *no-cors* loads — an `<img>` or `<script>` pointed at this
+API from another origin — and does not touch a CORS request. The single-page
+application fetches attachment content through its authorized client and turns it
+into a blob rather than embedding it, so nothing it does is affected. A client
+that ever needs a bare `<img src>` against a download will be refused by this
+header, and `same-site` is the value that would allow a sibling origin.
+
+Compression is on everywhere, with an allowlist of text-shaped types. What it
+leaves out is the point: an attachment download streams stored bytes, and images,
+PDFs and archives are already compressed, so running them through gzip would
+spend CPU to make them very slightly larger.
+
+Tomcat's thread ceiling is set **below** its own default of 200, and the reason is
+the connection pool rather than the CPU. A request that touches the database needs
+one of `DB_POOL_MAX_SIZE` connections, so threads far in excess of the pool do not
+add throughput — they add requests queued inside the application, holding a thread
+and a socket, where a shorter queue would have applied backpressure at the front
+door instead. Raise it and the pool together or neither.
+
 ## Cross-cutting infrastructure
 
 Built in the foundation phase, used by every module afterwards.
@@ -1286,7 +1578,9 @@ Built in the foundation phase, used by every module afterwards.
   inbound id is accepted only if short and alphanumeric, so it cannot be used to
   forge log lines.
 - **Logging.** Structured JSON on stdout in production, four levels. Passwords,
-  tokens, keys, and personal data are never logged.
+  tokens, keys, and personal data are never logged. Since phase ten every finished
+  request also logs one line with its method, path, status and duration — without
+  the query string, because an invitation token travels in one.
 - **Health.** Actuator health, liveness, and readiness, without internal detail.
 - **API document.** Generated by springdoc from the controllers, so it cannot
   drift from the code.
@@ -1314,7 +1608,7 @@ Starts alongside the identity phase.
 | 7     | Notifications with read state, history, and the deadline scheduler. **Done.** |
 | 8     | Dashboards, reports, analytics, and the indexes they need. **Done.**    |
 | 9     | Admin panel. **Done.**                                                  |
-| 10    | Hardening: rate limits, headers, upload security, caching, query tuning, expired token purge. |
+| 10    | Hardening: rate limits, headers, request logging, scheduled purges, trigram search indexes, Redis-backed limiting, malware scanning, production configuration. **Done.** |
 | 11    | Delivery: environments, deployment, backups, end-to-end suite, docs.    |
 
 Each phase ends with its own tests and documentation, so the production
@@ -1331,14 +1625,14 @@ above.
 | Task dependency semantics  | **Settled.** A single blocking relationship, confined to one project, with no type column. Built in phase five. |
 | Notification delivery      | **Settled.** Polling shipped in phase seven: a paged feed, an unread count, and two ways to mark read. Server-sent events remain a later swap and need no change to the response shape. |
 | Project progress rule      | **Implemented** in phase five, with `DONE` winning over an unfinished checklist. |
-| Attachment byte purge      | **Deferred** to hardening. A soft-deleted file keeps its stored object, so the store grows until the purge exists. |
+| Attachment byte purge      | **Built** in phase ten. `AttachmentBytePurge` reclaims the object of any attachment soft-deleted for longer than `app.storage.purge.retention`, thirty days by default, in bounded batches. The object goes before the row, never the other way round, so a failure leaves a row that the next run retries rather than bytes nothing can name. **Off by default**: it destroys the only copy of a file, so a deployment opts in. Its retention is therefore also the window in which a file deleted by mistake can be recovered. |
 | Audit role separation      | **Deferred** to delivery. A trigger refuses edits to `activity_logs` today; the separate migration role and the `REVOKE` complete it. |
-| Virus scanning             | **Deferred** to hardening, with the rest of upload security. |
+| Virus scanning             | **Built** in phase ten as a provider-agnostic port. `MalwareScanner` has two shipped implementations: one that scans nothing, refused at startup under `prod`, and one that POSTs the bytes to a URL and reads the verdict from the status code. No engine is named or depended on. Scanning happens before anything is stored, so an infected upload leaves no object and no row; a scan that cannot be completed refuses the upload with 503 rather than accepting it. **Production fails closed**: the scanner is probed at startup and the application will not start without it. See *Malware scanning* below for what a deployment has to provide. |
 | Blocked tasks              | **Surfaced, not enforced.** The requirements state no rule about starting or finishing blocked work. Revisit only with evidence. |
-| Task full-text search      | Deferred to hardening. `q` folds and matches the title and the rendered key; the trigram or GIN index belongs with the other query tuning. |
+| Task full-text search      | **Indexed** in phase ten. `V11` enables `pg_trgm` and adds GIN trigram indexes on the six lowered expressions the existing searches already used — task title, project name and key, and the three account-directory columns. Not one query changed: they were correct and unindexable, and now they are correct and indexed. Trigram rather than `tsvector` because these searches match substrings, not words, and a word index would not find "authentication" from "auth". A term shorter than three characters still scans, which is inherent to trigram indexing. |
 | Kanban reordering          | Deferred. `board_position` exists, sorts, and is settable; gapless drag ordering is its own design. |
 | Custom workspace roles     | **Still deferred.** Phase nine built the editor that changes what the three seeded roles grant; creating, renaming and deleting a role are not built. Doing so needs a slug policy, a decision about the members of a deleted role, and the `default_role_id` pointer that would dangle |
-| Report caching             | **Deferred** to hardening, behind the shared cache. Phase eight computes every figure at request time and precomputes nothing, so an aggregate's cost is paid on every request. The window and page caps in `app.reports.*` bound one request; nothing bounds the rate of them. |
-| Workspace timezone validation | **Deferred** to hardening. `workspaces.timezone` is free text with a length check and nothing asserting it names a real zone. Phase eight is the first thing that reads it, and falls back to UTC with a WARN rather than failing a report. |
-| Untenanted aggregate cost  | **Deferred** to hardening, with the rest of the caching. The admin panel's statistics are the platform's only queries with no workspace predicate, so several are counts over whole tables that no index can usefully narrow. The window and page caps in `app.admin.*` bound one request; nothing bounds the rate of them, and there is no dataset here large enough to show what it costs. |
-| Audit retention            | **Deferred** to delivery, beside the backup policy. `activity_logs` is append-only and nothing prunes it, and phase nine added platform rows to it. The expired-token purge and the attachment byte purge are the same shape of open item. |
+| Report caching             | **Still deferred, and the phase that was supposed to unblock it deliberately did not.** Phase ten introduced Redis, which was the stated prerequisite, and then used it for rate-limit counters only: caching is not switched on, there is no `@EnableCaching` and no `CacheManager`. That is not an omission, it is the safest way to keep the standing decision that a resolved permission set must never be cached — with no cache infrastructure in the context there is no annotation for anybody to add and nothing for one to bind to. What did change is that the rate of these requests is now bounded, which was the concrete risk the caps could not cover. Caching a report remains available to a later phase, and whoever builds it has to keep permissions out of it. |
+| Workspace timezone validation | **This row was wrong, and was corrected in phase ten.** Validation has existed since phase three: `WorkspaceLifecycleService.requireKnownZone` resolves the submitted value through `ZoneId.of` and answers 400 for anything the JVM does not recognise, and it covers the only write path there is — creation hardcodes `UTC`. The column is still free text with only a length check, which is deliberate and documented on that method: the zone database changes several times a year and freezing a copy of it into a check constraint would mean a migration every time a country moved its clocks. Two residual details, neither worth code: `ZoneId.of` also accepts offsets such as `GMT+5`, so a stored value is a zone the JVM knows rather than strictly an IANA name; and `WorkspaceSettingsFacade.zoneOf` still falls back to UTC with a WARN, which is the right behaviour for a report rather than a gap. |
+| Untenanted aggregate cost  | **Partly addressed** in phase ten, and honestly still open. The admin statistics are still counts over whole tables that no index can usefully narrow, and they are still computed per request. What changed is the second half of the old entry: the rate of those requests is now bounded by the global per-address limit, so one caller can no longer issue them as fast as the application will answer. The account-directory search they sit beside is now trigram-indexed. There is still no dataset here large enough to show what the counts cost. |
+| Audit retention            | **Still deferred** to delivery, beside the backup policy. `activity_logs` is append-only and nothing prunes it, and phase nine added platform rows to it. It is now the only purge-shaped item left: the expired-token purge and the attachment byte purge both shipped in phase ten, and `common.scheduling.AdvisoryLock` plus `LockKeys` is the pattern a third one should copy. Deferred rather than built because a retention period for an audit trail is a policy question — possibly a legal one — rather than an engineering one. |

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.company.taskmanagementplatform.common.error.UnauthorizedException;
+import com.company.taskmanagementplatform.common.ratelimit.AccountRateLimitGuard;
 import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.users.UserAccount;
 import com.company.taskmanagementplatform.users.UserAccountService;
@@ -28,18 +29,21 @@ public class PasswordService {
     private final RefreshTokenService refreshTokens;
     private final ApplicationEventPublisher events;
     private final SecurityProperties.Tokens tokenProperties;
+    private final AccountRateLimitGuard rateLimits;
 
     PasswordService(
             UserAccountService users,
             SingleUseTokenService tokens,
             RefreshTokenService refreshTokens,
             ApplicationEventPublisher events,
-            SecurityProperties securityProperties) {
+            SecurityProperties securityProperties,
+            AccountRateLimitGuard rateLimits) {
         this.users = users;
         this.tokens = tokens;
         this.refreshTokens = refreshTokens;
         this.events = events;
         this.tokenProperties = securityProperties.tokens();
+        this.rateLimits = rateLimits;
     }
 
     /**
@@ -50,6 +54,12 @@ public class PasswordService {
      */
     @Transactional
     public void requestReset(String email) {
+        // Before the lookup. This endpoint answers the same way whether or not the
+        // address is registered, and a limit consumed after the lookup would only
+        // count the addresses that exist, which would make the timing of the two
+        // paths differ and give back what the uniform answer protects.
+        rateLimits.checkRecovery(email);
+
         users.findByEmail(email).ifPresent(account -> {
             String rawToken =
                     tokens.issue(account.id(), UserTokenType.PASSWORD_RESET, tokenProperties.passwordResetTtl());

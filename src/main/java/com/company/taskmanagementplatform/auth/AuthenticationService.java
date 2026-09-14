@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.company.taskmanagementplatform.common.error.ForbiddenException;
 import com.company.taskmanagementplatform.common.error.ResourceNotFoundException;
 import com.company.taskmanagementplatform.common.error.UnauthorizedException;
+import com.company.taskmanagementplatform.common.ratelimit.AccountRateLimitGuard;
 import com.company.taskmanagementplatform.common.security.AccessTokenService;
 import com.company.taskmanagementplatform.users.CredentialCheck;
 import com.company.taskmanagementplatform.users.UserAccount;
@@ -29,12 +30,17 @@ public class AuthenticationService {
     private final UserAccountService users;
     private final AccessTokenService accessTokens;
     private final RefreshTokenService refreshTokens;
+    private final AccountRateLimitGuard rateLimits;
 
     AuthenticationService(
-            UserAccountService users, AccessTokenService accessTokens, RefreshTokenService refreshTokens) {
+            UserAccountService users,
+            AccessTokenService accessTokens,
+            RefreshTokenService refreshTokens,
+            AccountRateLimitGuard rateLimits) {
         this.users = users;
         this.accessTokens = accessTokens;
         this.refreshTokens = refreshTokens;
+        this.rateLimits = rateLimits;
     }
 
     /**
@@ -45,6 +51,13 @@ public class AuthenticationService {
      */
     @Transactional
     public Session login(String email, String password, String userAgent, String ipAddress) {
+        // Before the credential check, so the limit bounds the bcrypt comparisons
+        // rather than merely the replies. Deliberately looser than the account
+        // lockout, so the lockout still fires first and somebody who has mistyped
+        // their password is told their account is locked rather than told to come
+        // back later; RateLimitProperties sets out that reasoning in full.
+        rateLimits.checkLogin(email);
+
         CredentialCheck check = users.verifyCredentials(email, password);
 
         switch (check.outcome()) {

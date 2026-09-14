@@ -29,9 +29,11 @@ import org.springframework.util.function.SingletonSupplier;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.handler.AbstractHandlerMethodMapping;
 
+import com.company.taskmanagementplatform.common.ratelimit.RateLimitFilter;
 import com.company.taskmanagementplatform.common.security.AccessTokenService;
 import com.company.taskmanagementplatform.common.security.AccountStatusProvider;
 import com.company.taskmanagementplatform.common.security.JwtAuthenticationFilter;
@@ -53,8 +55,10 @@ import com.company.taskmanagementplatform.common.security.SecurityErrorWriter;
  * path-scoped so it is not even sent with ordinary calls. If the transport ever moves off the cookie,
  * or the frontend is served from another site, this decision has to be revisited.
  *
- * <p>The headers, the stateless session policy and the CORS source are unchanged from the foundation
- * phase.
+ * <p>The stateless session policy and the CORS source are unchanged from the foundation phase. The
+ * headers gained four in the hardening phase — a content security policy, a permissions policy and
+ * the two cross-origin isolation headers — written by {@link ResponseSecurityHeaders}. The four the
+ * foundation phase set are untouched.
  */
 @Configuration
 @EnableConfigurationProperties(CorsProperties.class)
@@ -85,6 +89,7 @@ public class SecurityConfig {
             @Qualifier("corsConfigurationSource") CorsConfigurationSource corsSource,
             ObjectProvider<HandlerMapping> handlerMappings,
             JwtAuthenticationFilter jwtAuthenticationFilter,
+            RateLimitFilter rateLimitFilter,
             RestAuthenticationEntryPoint authenticationEntryPoint,
             RestAccessDeniedHandler accessDeniedHandler)
             throws Exception {
@@ -97,7 +102,12 @@ public class SecurityConfig {
                         .httpStrictTransportSecurity(hsts ->
                                 hsts.includeSubDomains(true).maxAgeInSeconds(31536000))
                         .referrerPolicy(referrer ->
-                                referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
+                                referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        // The four the framework does not write. One writer rather
+                        // than four registrations, because two content security
+                        // policies on one response are intersected rather than
+                        // chosen between; ResponseSecurityHeaders says why at length.
+                        .addHeaderWriter(new ResponseSecurityHeaders()))
                 // Both produce the shared error body. Without them a failure inside
                 // the filter chain would return a container error page, because the
                 // @RestControllerAdvice never sees it.
@@ -132,6 +142,20 @@ public class SecurityConfig {
                         // a request permitted here has no handler to reach.
                         .requestMatchers(unmappedRequest(handlerMappings)).permitAll()
                         .anyRequest().authenticated())
+                // Rate limiting before authentication, and immediately after CORS.
+                //
+                // Before authentication because verifying a token, reading an account's
+                // status and comparing a bcrypt hash are all work an unauthenticated
+                // caller can make this application do; a limit applied afterwards would
+                // bound the replies rather than the work.
+                //
+                // After CORS because Spring Security writes the CORS headers from inside
+                // this chain. A 429 produced in front of the chain would carry none of
+                // them, and a browser would refuse to hand the response to the
+                // single-page application at all — which would make the error envelope
+                // and the Retry-After header unreadable by the only client that needs
+                // them. RateLimitFilter records this at more length.
+                .addFilterAfter(rateLimitFilter, CorsFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

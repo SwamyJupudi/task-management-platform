@@ -1,4 +1,4 @@
-package com.company.taskmanagementplatform.notifications;
+package com.company.taskmanagementplatform.common.scheduling;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -36,9 +36,17 @@ import org.springframework.stereotype.Component;
  *
  * <p>No new dependency. A scheduler-locking library would do this and manage a table for it; this is
  * one statement and a connection, and the requirements ask for no more.
+ *
+ * <p><strong>It lived in {@code notifications} until the hardening phase, and moved here when a
+ * second job needed it.</strong> Three scheduled jobs now compete for locks of their own — the
+ * deadline scan, the expired-token purge and the attachment byte purge — and a lock primitive owned
+ * by one feature's package would have meant either an import from a module that has nothing to do
+ * with notifications, or a second copy of it. The keys are in {@link LockKeys} for the reason this
+ * class always said they should be: a constant invented at a call site is how two jobs end up
+ * sharing one by accident.
  */
 @Component
-class AdvisoryLock {
+public class AdvisoryLock {
 
     private static final Logger log = LoggerFactory.getLogger(AdvisoryLock.class);
 
@@ -54,7 +62,7 @@ class AdvisoryLock {
      * @param key the lock identifier, shared by every instance that must not overlap
      * @return whether the work ran here
      */
-    boolean runExclusively(long key, Runnable work) {
+    public boolean runExclusively(long key, Runnable work) {
         try (Connection connection = dataSource.getConnection()) {
             if (!tryLock(connection, key)) {
                 log.debug("Another instance holds the lock {}, skipping this run", key);

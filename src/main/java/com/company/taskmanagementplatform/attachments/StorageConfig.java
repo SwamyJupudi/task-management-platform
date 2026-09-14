@@ -40,7 +40,11 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
  * only by redeploying, and offering the option is how that becomes the normal way to run.
  */
 @Configuration
-@EnableConfigurationProperties(StorageProperties.class)
+@EnableConfigurationProperties({
+    StorageProperties.class,
+    AttachmentPurgeProperties.class,
+    AttachmentRescanProperties.class
+})
 class StorageConfig {
 
     private static final Logger log = LoggerFactory.getLogger(StorageConfig.class);

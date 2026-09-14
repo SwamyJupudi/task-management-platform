@@ -6,8 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ContentDisposition;
 
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -15,7 +13,6 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
@@ -34,8 +31,6 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
  * whole difference between them. The integration test runs against MinIO for exactly that reason.
  */
 class S3FileStore implements FileStore {
-
-    private static final Logger log = LoggerFactory.getLogger(S3FileStore.class);
 
     private final S3Client client;
     private final S3Presigner presigner;
@@ -81,23 +76,21 @@ class S3FileStore implements FileStore {
     }
 
     /**
-     * Removes the bytes.
+     * Removes the bytes, and raises rather than swallows a failure.
      *
-     * <p>Nothing calls this yet, here or in the local store. Deletion is soft and the byte purge that
-     * would reclaim the storage is hardening-phase work, recorded in {@code architecture.md}. The
-     * method exists because the port declares it, and so that the purge finds it already tested.
+     * <p>The byte purge added in the hardening phase is the caller. It deletes the database row only
+     * once this has returned, so a swallowed failure would mean the row went and the object stayed:
+     * bytes in the bucket that nothing in the schema can name, still being paid for and no longer
+     * findable. Logging and returning was safe only while nothing called this.
      *
-     * <p>Logs rather than throws, matching the local store: reclaiming space is housekeeping, and
-     * failing somebody's request over it would be worse than leaving an object behind.
+     * <p>An object that was already gone is a success, and S3 says so itself: {@code DeleteObject} is
+     * idempotent and answers 204 whether or not the key was there. So a purge that crashed between
+     * removing the object and removing the row reclaims the row on its next run rather than retrying
+     * forever.
      */
     @Override
     public void delete(String key) {
-        try {
-            client.deleteObject(
-                    DeleteObjectRequest.builder().bucket(bucket).key(key).build());
-        } catch (S3Exception e) {
-            log.warn("Could not remove stored object: key={}", key, e);
-        }
+        client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
     }
 
     /**

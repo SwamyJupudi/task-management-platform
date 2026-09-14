@@ -79,11 +79,40 @@ class Attachment {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /**
+     * What the malware scanner concluded. {@code CLEAN} is the only value a download is served from.
+     *
+     * <p>Not an enum type on the column, matching every other status in this schema: they are text with a
+     * check constraint, so adding a value is a migration rather than a PostgreSQL type alteration.
+     */
+    @Column(name = "scan_status", nullable = false)
+    private String scanStatus;
+
+    /** The engine's own name for what it found. Only ever set on a rejection; the schema enforces that. */
+    @Column(name = "scan_signature")
+    private String scanSignature;
+
+    /** When an engine actually looked. Null on the rows V12 backfilled, which predate scanning. */
+    @Column(name = "scanned_at")
+    private Instant scannedAt;
+
     protected Attachment() {
         // for JPA
     }
 
-    static Attachment create(
+    /**
+     * A file that has been scanned and passed.
+     *
+     * <p>There is no factory for one that has not. The upload path scans before it stores anything, so a
+     * file that could not be cleared never reaches a row — which is why {@code PENDING} and {@code
+     * SCANNING} exist in the schema for an asynchronous engine rather than being reachable from here.
+     * Making the only constructor the clean one means an unscanned row cannot be created by forgetting a
+     * step.
+     *
+     * @param scannedAt when the engine looked. Carried in rather than defaulted, so the row records the
+     *     moment of the scan rather than the moment of the insert
+     */
+    static Attachment createScanned(
             UUID workspaceId,
             UUID projectId,
             UUID taskId,
@@ -93,9 +122,12 @@ class Attachment {
             long sizeBytes,
             String checksumSha256,
             String storageProvider,
-            String storageKey) {
+            String storageKey,
+            Instant scannedAt) {
 
         Attachment attachment = new Attachment();
+        attachment.scanStatus = ScanStatus.CLEAN;
+        attachment.scannedAt = scannedAt;
         attachment.workspaceId = workspaceId;
         attachment.projectId = projectId;
         attachment.taskId = taskId;
@@ -128,6 +160,47 @@ class Attachment {
 
     void softDelete(Instant now) {
         this.deletedAt = now;
+    }
+
+    /**
+     * Promotes a file to downloadable, because a scanner has just looked at these bytes and passed them.
+     *
+     * <p>The only way a row becomes {@code CLEAN} other than being created that way by an upload whose scan
+     * passed. Both paths set {@code scannedAt} in the same breath as the status, which is what makes a
+     * {@code CLEAN} row with no scan timestamp something this application cannot produce — and the database
+     * refuses it outright through {@code attachments_clean_requires_scanned_at_check}, so a stray UPDATE
+     * cannot produce one either.
+     *
+     * <p>Any previous signature is cleared. A row reaching this state has no finding against it, and the
+     * schema refuses a signature on anything but a rejection.
+     */
+    void markScanClean(Instant scannedAt) {
+        this.scanStatus = ScanStatus.CLEAN;
+        this.scanSignature = null;
+        this.scannedAt = scannedAt;
+    }
+
+    /**
+     * Records that a scanner found something, which leaves the file permanently unservable.
+     *
+     * <p>Reached only by the rescan: an infected upload is refused before anything is stored, so it never
+     * becomes a row at all. These rows therefore describe one situation — a file that predates scanning, or
+     * predates the signature that catches it, and has now been looked at.
+     *
+     * <p>The bytes are deliberately left in the store. Deleting somebody's file from a background job is a
+     * larger decision than recording a verdict, the row is already unservable, and the signature is worth
+     * keeping for whoever investigates. Reclaiming the bytes is the ordinary delete followed by the byte
+     * purge, which is an operator's call.
+     */
+    void markScanRejected(String signature, Instant scannedAt) {
+        this.scanStatus = ScanStatus.REJECTED;
+        this.scanSignature = signature;
+        this.scannedAt = scannedAt;
+    }
+
+    /** Whether a scanner has ever looked at these bytes. False for every row that predates {@code V12}. */
+    boolean hasBeenScanned() {
+        return scannedAt != null;
     }
 
     boolean isUploadedBy(UUID userId) {
@@ -184,6 +257,38 @@ class Attachment {
 
     String getStorageKey() {
         return storageKey;
+    }
+
+    /**
+     * Whether the bytes may be served.
+     *
+     * <p>Written as "is it clean" rather than "is it not rejected" on purpose. A status added later — an
+     * asynchronous engine's {@code SCANNING}, a quarantine state nobody has thought of yet — is refused by
+     * this method by default instead of being served by default, which is the same way round the security
+     * chain is built and for the same reason.
+     */
+    boolean isApprovedForDownload() {
+        return ScanStatus.CLEAN.equals(scanStatus);
+    }
+
+    String getScanStatus() {
+        return scanStatus;
+    }
+
+    /**
+     * The engine's name for what was found, on a row that records a rejection.
+     *
+     * <p>Always null on a row this application wrote, because an infected upload is refused before anything
+     * is stored and so never becomes a row at all. The column and this accessor exist for the rejection an
+     * operator records after the fact — quarantining a file a later signature update flagged — which is the
+     * case {@code V12__attachment_scan_state.sql} describes.
+     */
+    String getScanSignature() {
+        return scanSignature;
+    }
+
+    Instant getScannedAt() {
+        return scannedAt;
     }
 
     Instant getCreatedAt() {

@@ -3,7 +3,6 @@ package com.company.taskmanagementplatform.notifications;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 /**
@@ -29,12 +28,13 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  * the same bargain phase six made for audit rows, and it is a better one here, because a lost
  * notification is a message somebody did not get rather than a hole in a record.
  *
- * <p>{@link EnableScheduling} is on this class rather than on the application, so the platform's
- * first scheduled job arrives with the feature that needs it and nothing else starts running in the
- * background by accident.
+ * <p><strong>Scheduling is no longer switched on here.</strong> It was, while the deadline scan was
+ * the only scheduled job in the platform and the annotation could honestly say that scheduling arrived
+ * with the feature needing it. The hardening phase added two purges in two other modules, so {@code
+ * @EnableScheduling} moved to {@code common.scheduling.SchedulingConfig}, which is now the one place
+ * that starts background work. This class kept the executor, which really is notifications' own.
  */
 @Configuration
-@EnableScheduling
 @EnableConfigurationProperties(DeadlineProperties.class)
 class NotificationConfig {
 

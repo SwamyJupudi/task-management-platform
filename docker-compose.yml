@@ -17,5 +17,32 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional, and behind a profile so `docker compose up -d` still starts only
+  # PostgreSQL. Start it with `docker compose --profile redis up -d`.
+  #
+  # Optional because the rate limiter fails open: with no Redis reachable every
+  # request is allowed and the application is fully usable, which is what local
+  # development wants by default. Start this when the thing being worked on is
+  # the limiting itself, and remember that a limit reached locally lives in the
+  # container rather than in the process — `docker compose restart redis`
+  # clears every counter.
+  #
+  # No volume on purpose. The only thing in here is a set of counters that are
+  # worthless the moment they are a second old, so persisting them across a
+  # restart would be storing rubbish.
+  redis:
+    image: redis:7-alpine
+    container_name: tmp-redis
+    profiles: ["redis"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    # No persistence, for the reason above.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres-data:

@@ -43,6 +43,27 @@ public class GlobalExceptionHandler {
         return respond(ex.errorCode(), ex.getMessage(), request, ex, List.of());
     }
 
+    /**
+     * A rate limit, which is the one deliberate failure that carries a header as well as a body.
+     *
+     * <p>Declared separately from {@link #handleApplication} even though the exception extends {@code
+     * ApplicationException} and that handler would match it: Spring picks the most specific handler, and
+     * the body has to come out of {@code respond} so that a 429 is shaped exactly like every other error
+     * and logged the same way. Only the header is added here.
+     *
+     * <p>{@code Retry-After} is not decoration. A 429 without it tells a client to back off without saying
+     * how far, and the reasonable thing to do with that instruction is retry at once.
+     */
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ApiErrorResponse> handleTooManyRequests(
+            TooManyRequestsException ex, HttpServletRequest request) {
+
+        ResponseEntity<ApiErrorResponse> response = respond(ex.errorCode(), ex.getMessage(), request, ex, List.of());
+        return ResponseEntity.status(response.getStatusCode())
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, Long.toString(ex.retryAfterSeconds()))
+                .body(response.getBody());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiErrorResponse> handleBodyValidation(
             MethodArgumentNotValidException ex, HttpServletRequest request) {

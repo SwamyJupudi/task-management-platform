@@ -10,9 +10,6 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.Optional;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * A {@link FileStore} that writes under a directory on this machine.
  *
@@ -26,8 +23,6 @@ import org.slf4j.LoggerFactory;
  * the path is tested rather than theoretical.
  */
 class LocalFileStore implements FileStore {
-
-    private static final Logger log = LoggerFactory.getLogger(LocalFileStore.class);
 
     private final Path root;
 
@@ -60,14 +55,23 @@ class LocalFileStore implements FileStore {
         }
     }
 
+    /**
+     * Removes the file, and raises rather than swallows a failure.
+     *
+     * <p>This used to log and return, on the reasoning that reclaiming space is housekeeping and should
+     * not fail a request. That reasoning held while nothing called it. The purge is the caller now, and
+     * it deletes the database row only once this has returned: a swallowed failure here would mean the
+     * row went and the file stayed, leaving bytes on disk that nothing in the schema can name any more.
+     *
+     * <p>A file that was already absent is a success. {@code deleteIfExists} returns false rather than
+     * throwing, and false is the post-condition the caller wanted.
+     */
     @Override
     public void delete(String key) {
         try {
             Files.deleteIfExists(resolve(key));
         } catch (IOException e) {
-            // Deleting bytes is housekeeping. Failing the caller's request over it
-            // would be worse than leaving a file behind for the purge to find.
-            log.warn("Could not remove stored object: key={}", key, e);
+            throw new UncheckedIOException("Could not remove " + key, e);
         }
     }
 

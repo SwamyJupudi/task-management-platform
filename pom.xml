@@ -101,6 +101,32 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
+        <!--
+          Redis, and it is here for exactly one thing: the rate limiter's
+          counters. A limit has to be shared across instances or it is not a
+          limit, and a counter is the one piece of state in this application
+          that is worthless the moment it is a second old, which is what makes
+          an in-memory store the right home for it.
+
+          IT IS NOT A CACHE, and nothing switches caching on. @EnableCaching
+          appears nowhere, so there is no annotation anybody can add to a
+          method and no CacheManager for one to bind to. That is deliberate:
+          the standing decision in architecture.md is that a resolved
+          permission set must NOT be cached, because a membership change, a
+          role change and a deactivation all have to take effect at once, and
+          the easiest way to break that rule by accident would be to leave a
+          cache infrastructure lying around next to PermissionResolver.
+
+          Redis being unreachable is not an outage. The limiter fails open and
+          the application serves every request, so this is a dependency that
+          degrades rather than one that is required — which is also why the
+          Redis health indicator is switched off in application.properties.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- API documentation -->
         <dependency>
             <groupId>org.springdoc</groupId>
@@ -188,6 +214,19 @@
             <artifactId>testcontainers-localstack</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!--
+          No dedicated Redis Testcontainers module. The rate limiter's tests
+          start a plain redis image through GenericContainer, which comes with
+          the core artifact the two modules above already pull in, so there is
+          nothing to add here and nothing new to keep up to date.
+
+          Only RateLimitIT starts one. The rest of the suite runs with no Redis
+          at all, which is not a gap in coverage but a property worth having
+          tested: with the store unreachable the limiter fails open, so every
+          other test proves that an unavailable Redis changes nothing about how
+          the application behaves.
+        -->
     </dependencies>
 
     <build>

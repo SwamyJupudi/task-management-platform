@@ -37,7 +37,22 @@ public interface FileStore {
 
     InputStream open(String key);
 
-    /** Removes the bytes. Not called by the ordinary delete, which is soft; see the purge note. */
+    /**
+     * Removes the bytes, and makes a failure to do so visible to the caller.
+     *
+     * <p>Not called by the ordinary delete, which is soft. Its one caller is the purge that reclaims
+     * storage behind attachments deleted long enough ago to be past their retention.
+     *
+     * <p><strong>An implementation must throw when the object may still exist, and must return
+     * normally when it certainly does not.</strong> That contract is what lets the purge delete the
+     * database row only after the bytes have actually gone: a store that swallowed its own failure
+     * would report success, the row would be removed, and the object would be left behind with nothing
+     * left in the schema that knows its key — unreachable, unbilled for by nobody, and impossible to
+     * find again. An object that was already absent is a success, because the post-condition the
+     * caller needs is that it is not there.
+     *
+     * @throws RuntimeException if the object might still exist
+     */
     void delete(String key);
 
     /**

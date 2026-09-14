@@ -13,6 +13,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.company.taskmanagementplatform.common.scheduling.AdvisoryLock;
+import com.company.taskmanagementplatform.common.scheduling.LockKeys;
 import com.company.taskmanagementplatform.notifications.NotificationWriter.NotificationRow;
 import com.company.taskmanagementplatform.tasks.TaskDigest;
 import com.company.taskmanagementplatform.tasks.TaskNotificationFacade;
@@ -22,7 +24,9 @@ import com.company.taskmanagementplatform.tasks.TaskNotificationFacade;
  *
  * <p>Five of the six the requirements name are things a person did, and they arrive as events. "Task
  * deadline approaching" is the exception: nothing happens, time passes, and somebody should be told.
- * That is why this class exists and why it is the only scheduled job in the platform.
+ * That is why this class exists. It was the only scheduled job in the platform until the hardening
+ * phase, and it is still the only one that writes rather than deletes: the two purges beside it
+ * reclaim storage and are off unless a deployment asks for them.
  *
  * <p><strong>Daily, not hourly.</strong> An approaching deadline is a once-a-day fact. An hourly
  * scan would read the same tasks twenty-four times to send the same rows, and the unique index would
@@ -42,15 +46,6 @@ import com.company.taskmanagementplatform.tasks.TaskNotificationFacade;
 class DeadlineScanner {
 
     private static final Logger log = LoggerFactory.getLogger(DeadlineScanner.class);
-
-    /**
-     * The advisory lock every instance competes for.
-     *
-     * <p>An arbitrary constant, and it only has to be unique among the advisory locks this
-     * application takes. It is the only one so far; a second one belongs beside it here rather than
-     * invented at a call site.
-     */
-    private static final long LOCK_KEY = 8_421_337_001L;
 
     private final TaskNotificationFacade tasks;
     private final NotificationWriter writer;
@@ -101,7 +96,7 @@ class DeadlineScanner {
         DeadlineWindow window = DeadlineWindow.ahead(LocalDate.now(clock), properties.leadDays());
         AtomicInteger written = new AtomicInteger();
 
-        boolean ran = lock.runExclusively(LOCK_KEY, () -> written.set(scan(window)));
+        boolean ran = lock.runExclusively(LockKeys.DEADLINE_SCAN, () -> written.set(scan(window)));
         if (!ran) {
             return 0;
         }

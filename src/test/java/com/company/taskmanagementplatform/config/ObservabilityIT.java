@@ -56,6 +56,48 @@ class ObservabilityIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void theHardeningHeadersArePresentAlongsideTheFoundationOnes() throws Exception {
+        // Four added in the hardening phase. The foundation four above are asserted
+        // separately and on purpose: this must not become the test that quietly
+        // stops noticing one of them went missing.
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(header().string("Content-Security-Policy", "default-src 'none'; "
+                        + "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"))
+                .andExpect(header().string("Cross-Origin-Opener-Policy", "same-origin"))
+                .andExpect(header().string("Cross-Origin-Resource-Policy", "same-origin"))
+                .andExpect(header().string("Permissions-Policy",
+                        org.hamcrest.Matchers.containsString("camera=()")));
+    }
+
+    @Test
+    void theDocumentationConsoleGetsThePolicyItCanRunUnder() throws Exception {
+        // Swagger UI configures itself with an inline script, so the strict policy
+        // would leave the console blank. The generated document it reads is JSON
+        // and keeps the strict policy.
+        mockMvc.perform(get("/swagger-ui/index.css"))
+                .andExpect(header().string("Content-Security-Policy",
+                        org.hamcrest.Matchers.containsString("script-src 'self' 'unsafe-inline'")));
+
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(header().string("Content-Security-Policy",
+                        org.hamcrest.Matchers.containsString("default-src 'none'")));
+    }
+
+    @Test
+    void onlyOneContentSecurityPolicyHeaderIsSent() throws Exception {
+        // Two would be intersected by the browser rather than chosen between, which
+        // is the whole reason the policy is written by one writer.
+        mockMvc.perform(get("/api/v1/auth/me"))
+                .andExpect(result -> {
+                    java.util.List<String> policies =
+                            result.getResponse().getHeaders("Content-Security-Policy");
+                    if (policies.size() != 1) {
+                        throw new AssertionError("expected exactly one policy header, got " + policies);
+                    }
+                });
+    }
+
+    @Test
     void unknownPathReturnsTheStandardErrorBody() throws Exception {
         mockMvc.perform(get("/api/v1/does-not-exist"))
                 .andExpect(status().isNotFound())

@@ -6,6 +6,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.company.taskmanagementplatform.common.ratelimit.AccountRateLimitGuard;
 import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.users.UserAccount;
 import com.company.taskmanagementplatform.users.UserAccountService;
@@ -25,20 +26,33 @@ public class RegistrationService {
     private final SingleUseTokenService tokens;
     private final ApplicationEventPublisher events;
     private final SecurityProperties.Tokens tokenProperties;
+    private final AccountRateLimitGuard rateLimits;
 
     RegistrationService(
             UserAccountService users,
             SingleUseTokenService tokens,
             ApplicationEventPublisher events,
-            SecurityProperties securityProperties) {
+            SecurityProperties securityProperties,
+            AccountRateLimitGuard rateLimits) {
         this.users = users;
         this.tokens = tokens;
         this.events = events;
         this.tokenProperties = securityProperties.tokens();
+        this.rateLimits = rateLimits;
     }
 
     @Transactional
     public UserAccount register(String email, String password, String firstName, String lastName) {
+        // BEFORE the existence check inside users.register, which is the only
+        // ordering that closes anything. architecture.md accepted that this
+        // endpoint answers 409 for an address that already has an account, and so
+        // discloses that it is registered, on the stated condition that the
+        // hardening phase limit registration by address as well as by caller.
+        // Consumed here, an attacker gets a handful of answers about an address per
+        // hour; consumed after the check, they would get as many as they liked and
+        // the limit would only bound the successes.
+        rateLimits.checkRegistration(email);
+
         UserAccount account = users.register(email, password, firstName, lastName);
         sendVerification(account.id(), account.email());
         return account;
@@ -58,6 +72,12 @@ public class RegistrationService {
      */
     @Transactional
     public void resendVerification(String email) {
+        // Reachable without signing in and it sends mail to whatever address it is
+        // given, so the limit is as much about not being usable to pester somebody
+        // as it is about load. Before the lookup, so a refused caller learns nothing
+        // about whether the address exists.
+        rateLimits.checkRecovery(email);
+
         users.findByEmail(email)
                 .filter(account -> !account.isEmailVerified())
                 .ifPresent(account -> sendVerification(account.id(), account.email()));
