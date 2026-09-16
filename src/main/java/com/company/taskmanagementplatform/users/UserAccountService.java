@@ -40,6 +40,7 @@ public class UserAccountService {
     private static final Logger log = LoggerFactory.getLogger(UserAccountService.class);
 
     private final UserRepository users;
+    private final LoginFailureRecorder loginFailures;
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicy passwordPolicy;
     private final SecurityProperties.Lockout lockout;
@@ -57,12 +58,14 @@ public class UserAccountService {
 
     UserAccountService(
             UserRepository users,
+            LoginFailureRecorder loginFailures,
             PasswordEncoder passwordEncoder,
             PasswordPolicy passwordPolicy,
             SecurityProperties securityProperties,
             ApplicationEventPublisher events,
             Clock clock) {
         this.users = users;
+        this.loginFailures = loginFailures;
         this.passwordEncoder = passwordEncoder;
         this.passwordPolicy = passwordPolicy;
         this.lockout = securityProperties.lockout();
@@ -125,7 +128,11 @@ public class UserAccountService {
         Instant now = clock.instant();
 
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
-            boolean nowLocked = user.recordFailedLogin(lockout.maxAttempts(), lockout.duration(), now);
+            // Through the recorder, in a transaction of its own, because the caller
+            // throws for this outcome and would otherwise roll the increment back
+            // along with its own work. LoginFailureRecorder explains it in full.
+            boolean nowLocked =
+                    loginFailures.recordFailure(user.getId(), lockout.maxAttempts(), lockout.duration(), now);
             if (nowLocked) {
                 log.warn("Account locked after {} consecutive failures: userId={}", lockout.maxAttempts(), user.getId());
             }

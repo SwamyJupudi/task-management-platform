@@ -66,10 +66,14 @@ curl http://localhost:8080/actuator/health
 
 Then open the API console at <http://localhost:8080/swagger-ui.html>.
 
-There is no mail transport yet. In the `dev` profile the verification and reset
-links are written to the application log instead, so you can complete either flow
-locally by copying the link out of the console. That logging is off everywhere
-else, because tokens do not belong in logs.
+Mail is delivered over SMTP, configured through `SMTP_HOST` and the variables
+beside it in [`.env.example`](.env.example). Development leaves those empty and
+runs `MAIL_PROVIDER=LOG`, which writes the verification and reset links to the
+application log instead, so you can complete either flow locally by copying the
+link out of the console. That logging is off everywhere but `dev`, because tokens
+do not belong in logs, and `MAIL_PROVIDER=LOG` is refused outright under `prod`:
+a deployment that delivers nothing cannot verify an address or complete an
+invitation, and it fails silently.
 
 Uploaded files go to `./var/attachments` in development, which is git-ignored and
 safe to delete. No object-storage provider has been chosen, so the application

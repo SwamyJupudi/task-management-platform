@@ -51,6 +51,10 @@ class UserAccountServiceTest {
         when(encoder.encode(anyString())).thenAnswer(call -> "hashed:" + call.getArgument(0));
         service = new UserAccountService(
                 repository,
+                // The real recorder on the mocked repository, not a mock of it: these
+                // tests are about the counting, and a stubbed recorder would assert
+                // only that a call was made.
+                new LoginFailureRecorder(repository),
                 encoder,
                 new PasswordPolicy(TestSecurityProperties.defaults()),
                 TestSecurityProperties.withLockout(5, Duration.ofMinutes(15)),
@@ -122,7 +126,7 @@ class UserAccountServiceTest {
     void doesNotRevealAccountStateUntilThePasswordIsCorrect() {
         User deactivated = active("ada@example.com");
         deactivated.deactivate();
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(deactivated));
+        knownAccount(deactivated);
         when(encoder.matches(eq("wrong"), any())).thenReturn(false);
 
         // Wrong password on a switched-off account still reports only the generic
@@ -135,7 +139,7 @@ class UserAccountServiceTest {
     void revealsAccountStateOnceThePasswordIsCorrect() {
         User deactivated = active("ada@example.com");
         deactivated.deactivate();
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(deactivated));
+        knownAccount(deactivated);
         when(encoder.matches(eq("right"), any())).thenReturn(true);
 
         assertThat(service.verifyCredentials("ada@example.com", "right").outcome())
@@ -145,7 +149,7 @@ class UserAccountServiceTest {
     @Test
     void refusesAnUnverifiedAccountWithTheRightPassword() {
         User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(pending));
+        knownAccount(pending);
         when(encoder.matches(eq("right"), any())).thenReturn(true);
 
         assertThat(service.verifyCredentials("ada@example.com", "right").outcome())
@@ -155,7 +159,7 @@ class UserAccountServiceTest {
     @Test
     void acceptsTheRightPasswordOnAnActiveAccount() {
         User user = active("ada@example.com");
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        knownAccount(user);
         when(encoder.matches(eq("right"), any())).thenReturn(true);
 
         assertThat(service.verifyCredentials("ada@example.com", "right").outcome())
@@ -165,7 +169,7 @@ class UserAccountServiceTest {
     @Test
     void locksAnAccountAfterTheConfiguredNumberOfFailures() {
         User user = active("ada@example.com");
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        knownAccount(user);
         when(encoder.matches(eq("wrong"), any())).thenReturn(false);
 
         for (int attempt = 0; attempt < 5; attempt++) {
@@ -178,7 +182,7 @@ class UserAccountServiceTest {
     @Test
     void reportsALockedAccountOnlyWhenThePasswordIsRight() {
         User user = active("ada@example.com");
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        knownAccount(user);
         when(encoder.matches(eq("wrong"), any())).thenReturn(false);
         for (int attempt = 0; attempt < 5; attempt++) {
             service.verifyCredentials("ada@example.com", "wrong");
@@ -194,7 +198,7 @@ class UserAccountServiceTest {
     @Test
     void aSuccessfulSignInClearsTheFailureCount() {
         User user = active("ada@example.com");
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        knownAccount(user);
         when(encoder.matches(eq("wrong"), any())).thenReturn(false);
         service.verifyCredentials("ada@example.com", "wrong");
         service.verifyCredentials("ada@example.com", "wrong");
@@ -216,7 +220,7 @@ class UserAccountServiceTest {
         // Otherwise anybody who knows an address could keep its owner locked out
         // indefinitely, turning a defence against guessing into a denial of service.
         User user = active("ada@example.com");
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        knownAccount(user);
         when(encoder.matches(eq("wrong"), any())).thenReturn(false);
 
         for (int attempt = 0; attempt < 5; attempt++) {
@@ -235,7 +239,7 @@ class UserAccountServiceTest {
     @Test
     void failuresDuringALockDoNotInflateTheCounter() {
         User user = active("ada@example.com");
-        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        knownAccount(user);
         when(encoder.matches(eq("wrong"), any())).thenReturn(false);
 
         for (int attempt = 0; attempt < 20; attempt++) {
@@ -426,6 +430,17 @@ class UserAccountServiceTest {
         // person renaming themselves is never recorded as an administrative action.
         service.updateProfileOf(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "Grace", "Hopper");
         verify(events).publishEvent(any(UserAdminEvents.ProfileUpdated.class));
+    }
+
+    /**
+     * The repository answers for this account by address and by id.
+     *
+     * <p>Both, because {@link LoginFailureRecorder} loads it again by id in a transaction of its
+     * own rather than writing through the instance the credential check is holding.
+     */
+    private void knownAccount(User user) {
+        when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
+        when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(user));
     }
 
     private User active(String email) {

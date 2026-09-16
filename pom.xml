@@ -76,6 +76,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+        <!--
+          Mail. Brings Jakarta Mail and Spring's JavaMailSender, which is built from
+          spring.mail.* only when a host is configured: development and the tests set
+          none, so nothing is created there and the logging transport stands in.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>

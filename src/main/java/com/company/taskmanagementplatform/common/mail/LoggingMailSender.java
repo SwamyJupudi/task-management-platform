@@ -1,7 +1,5 @@
 package com.company.taskmanagementplatform.common.mail;
 
-import java.util.Map;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,11 +23,6 @@ public class LoggingMailSender implements MailSender {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingMailSender.class);
 
-    private static final Map<MailMessage.MailTemplate, String> LINK_PATHS = Map.of(
-            MailMessage.MailTemplate.EMAIL_VERIFICATION, "/verify-email",
-            MailMessage.MailTemplate.PASSWORD_RESET, "/reset-password",
-            MailMessage.MailTemplate.WORKSPACE_INVITATION, "/invitations/accept");
-
     private final MailProperties properties;
 
     public LoggingMailSender(MailProperties properties) {
@@ -38,7 +31,7 @@ public class LoggingMailSender implements MailSender {
 
     @Override
     public void send(MailMessage message) {
-        String recipient = properties.logTokens() ? message.recipient() : mask(message.recipient());
+        String recipient = properties.logTokens() ? message.recipient() : MailRendering.mask(message.recipient());
         String link = link(message);
 
         log.warn(
@@ -49,7 +42,7 @@ public class LoggingMailSender implements MailSender {
     }
 
     private String link(MailMessage message) {
-        String path = LINK_PATHS.get(message.template());
+        String path = MailRendering.pathFor(message.template());
         if (path == null) {
             return "(no link for this template)";
         }
@@ -61,13 +54,4 @@ public class LoggingMailSender implements MailSender {
         return base + path + "?token=" + (properties.logTokens() ? token : "(redacted)");
     }
 
-    /** Keeps enough of an address to recognise it, not enough to reuse it. */
-    private static String mask(String address) {
-        int at = address.indexOf('@');
-        if (at <= 0) {
-            return "(redacted)";
-        }
-        char initial = address.charAt(0);
-        return initial + "***" + address.substring(at);
-    }
 }
