@@ -1,0 +1,112 @@
+# The demo deployment: one free web service, and the Postgres instance you
+# already have.
+#
+# NOT PRODUCTION. Production is deploy/docker-compose.prod.yml, and the two are
+# deliberately different shapes: this runs the interface and the API in one
+# container under the `demo` profile, with no edge proxy, no object storage, no
+# Redis and no malware scanner, because a free Render account gets one service.
+# application-demo.properties lists every relaxation that follows from that.
+#
+# Nothing secret is in this file. Every value a deployment has to supply is
+# marked `sync: false`, which tells Render to take it from the dashboard and
+# never from the repository.
+
+services:
+  - type: web
+    name: task-management-platform-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile.demo
+    # The whole repository, because the image builds both halves from it.
+    dockerContext: .
+    plan: free
+    region: oregon
+    branch: master
+
+    # Render probes this path and restarts the instance when it stops
+    # answering. The readiness group is what a probe should ask -- it reports UP
+    # only once Flyway has finished and the context has refreshed -- but the
+    # prod-shaped profile exposes only /actuator/health, so that is what this
+    # uses. Its body is {"status":"UP"} and nothing more.
+    healthCheckPath: /actuator/health
+
+    envVars:
+      # --- Fixed by this topology, not by the environment -----------------
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+
+      # Render injects PORT and probes it; Spring reads SERVER_PORT. Setting
+      # both to the same number is what reconciles them. 10000 is Render's
+      # default for a Docker service.
+      - key: SERVER_PORT
+        value: "10000"
+      - key: PORT
+        value: "10000"
+
+      # Sized for 512MB and a free Postgres connection allowance.
+      - key: DB_POOL_MAX_SIZE
+        value: "5"
+      - key: TOMCAT_MAX_THREADS
+        value: "20"
+
+      # The demo relaxations, stated here as well as in the profile so that
+      # reading the service's environment tells the whole story.
+      - key: STORAGE_PROVIDER
+        value: LOCAL
+      - key: STORAGE_LOCAL_DIR
+        value: /tmp/attachments
+      - key: MALWARE_SCAN_PROVIDER
+        value: DISABLED
+
+      # Scheduled work. The two purges are safe here and keep a small database
+      # small; the rescan has nothing to rescan without a scanner.
+      - key: TOKEN_PURGE_ENABLED
+        value: "true"
+      - key: ATTACHMENT_PURGE_ENABLED
+        value: "true"
+      - key: ATTACHMENT_RESCAN_ENABLED
+        value: "false"
+      - key: DEADLINE_SCAN_ENABLED
+        value: "true"
+
+      # --- From the Render Postgres instance ------------------------------
+      # DB_URL is NOT the connection string Render shows. Spring needs the JDBC
+      # form: jdbc:postgresql://HOST:5432/DATABASE?sslmode=require
+      - key: DB_URL
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+
+      # --- Secrets and per-deployment values ------------------------------
+      # At least 32 bytes: openssl rand -base64 48
+      - key: JWT_SECRET
+        sync: false
+
+      # Both must be this service's own https:// origin. The refresh cookie is
+      # SameSite=Strict, so a mismatch signs people in and drops them on reload.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: MAIL_LINK_BASE_URL
+        sync: false
+
+      # Mail over a provider's HTTP API rather than SMTP: an ordinary HTTPS call,
+      # which a platform that restricts outbound mail ports cannot get in the way
+      # of. DemoMailConfig contributes that transport under this profile alone.
+      #
+      # Leave MAIL_HTTP_API_KEY unset and the demo still works -- links are
+      # written to the log and completed by copy and paste. Set it and mail is
+      # delivered properly.
+      - key: MAIL_HTTP_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: MAIL_FROM_NAME
+        sync: false
+
+      # Read only on a first boot with no administrator. Set them, sign in,
+      # change the password, then REMOVE BOTH and redeploy.
+      - key: SUPER_ADMIN_EMAIL
+        sync: false
+      - key: SUPER_ADMIN_PASSWORD
+        sync: false

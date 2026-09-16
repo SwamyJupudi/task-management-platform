@@ -1,0 +1,98 @@
+# The demo image: the interface and the API in one container, for one free
+# Render web service.
+#
+# WHY THIS IS A SECOND FILE RATHER THAN A CHANGE TO `Dockerfile`
+#
+# The root Dockerfile builds the production backend, and production serves the
+# interface from its own container behind an edge proxy. Folding the bundle into
+# that image would change what production ships — a larger image, and a backend
+# that answers `/` with a document instead of a 404 — to no benefit there, since
+# the proxy routes `/` to the frontend service and would never reach it. This
+# phase's instruction was not to modify production behaviour, so the production
+# image is left exactly as it was and the demo gets its own.
+#
+# WHAT IS DIFFERENT, AND NOTHING ELSE IS
+#
+#   1. A Node stage builds frontend/ and the result is copied into the backend's
+#      static resources, so one origin serves both. That is a requirement rather
+#      than a convenience: the refresh cookie is SameSite=Strict and would not be
+#      sent to an API on a second hostname.
+#   2. The runtime writes attachments to /tmp, because the demo profile stores
+#      them locally and a Render filesystem is ephemeral anyway.
+#
+# The application is identical. Every demo relaxation lives in
+# application-demo.properties and is reached by SPRING_PROFILES_ACTIVE=demo.
+
+# ---------------------------------------------------------------------------
+# Stage 1: the interface
+# ---------------------------------------------------------------------------
+FROM node:22-alpine AS frontend
+
+WORKDIR /build
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+
+# The same relative path the production image bakes in, for the same reason:
+# one origin, so the SameSite=Strict refresh cookie is sent at all. An absolute
+# URL here would break the session on every reload.
+ENV VITE_API_BASE_URL=/api/v1
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Stage 2: build the application, with the bundle inside it
+# ---------------------------------------------------------------------------
+FROM maven:3.9-eclipse-temurin-17 AS builder
+
+WORKDIR /build
+
+COPY pom.xml ./
+RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp dependency:go-offline
+
+COPY src ./src
+
+# Into src/main/resources/static, which Spring serves from the classpath and
+# SpaResourceConfig adds the single-page fallback to. Copied before the package
+# below so the jar carries it.
+COPY --from=frontend /build/dist/ ./src/main/resources/static/
+
+RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp -DskipTests package
+
+RUN java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destination extracted
+
+# ---------------------------------------------------------------------------
+# Stage 3: runtime
+# ---------------------------------------------------------------------------
+FROM eclipse-temurin:17-jre-alpine AS runtime
+
+RUN addgroup -S -g 10001 app && adduser -S -u 10001 -G app -H -s /sbin/nologin app
+
+WORKDIR /app
+
+COPY --from=builder --chown=app:app /build/extracted/dependencies/ ./
+COPY --from=builder --chown=app:app /build/extracted/spring-boot-loader/ ./
+COPY --from=builder --chown=app:app /build/extracted/snapshot-dependencies/ ./
+COPY --from=builder --chown=app:app /build/extracted/application/ ./
+
+# The demo profile writes attachments here. Owned by the runtime user because
+# the application creates the directory on first upload, and discarded with the
+# container on every deploy, which the profile's own comments say plainly.
+RUN mkdir -p /tmp/attachments && chown app:app /tmp/attachments
+
+USER app
+
+# Render sets PORT and probes it; SERVER_PORT is what Spring reads. The two are
+# reconciled by setting SERVER_PORT to the same value in the service's
+# environment, which deploy/render/README.md spells out. 8080 is the default so
+# the image still behaves locally.
+EXPOSE 8080
+
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -XX:+UseContainerSupport -Djava.security.egd=file:/dev/urandom"
+
+# No HEALTHCHECK. Render runs its own HTTP probe against the path configured on
+# the service and ignores this instruction; the production image keeps one
+# because compose gates `depends_on` on it.
+
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

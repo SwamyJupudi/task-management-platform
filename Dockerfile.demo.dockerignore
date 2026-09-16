@@ -1,0 +1,43 @@
+# The build context for the demo image.
+#
+# The root .dockerignore excludes frontend/ entirely, because the production
+# backend image has no use for it. This image builds both halves, so it needs a
+# context of its own; BuildKit reads <dockerfile>.dockerignore in preference to
+# the root one, which is what makes two contexts possible in one repository.
+#
+# Everything else here is the root file unchanged, and the first group is the
+# one that matters: a file copied into a layer stays in the image even if a
+# later layer deletes it, and `docker history` will still show it.
+
+# --- Never, under any circumstances ----------------------------------------
+# Environment files, the whole family. A rule that depends on somebody having
+# named their file correctly is not a rule.
+.env
+.env.*
+frontend/.env
+frontend/.env.*
+
+# Uploaded files written by the local file store.
+var/
+
+# --- Rebuilt inside the image ----------------------------------------------
+target/
+frontend/node_modules/
+frontend/dist/
+
+# --- Not needed to compile or to run ---------------------------------------
+.git/
+.github/
+.idea/
+.vscode/
+.claude/
+.mcp.json
+deploy/
+docs/
+*.md
+phase9-plan.txt
+Dockerfile
+Dockerfile.demo
+.dockerignore
+Dockerfile.demo.dockerignore
+docker-compose.yml
