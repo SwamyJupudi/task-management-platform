@@ -1,0 +1,38 @@
+# The build context for the backend image.
+#
+# Everything here is either rebuilt inside the image, belongs to the other half
+# of the repository, or must never enter an image layer at all. The last group
+# is the one that matters: a file copied into a layer stays in the image even if
+# a later layer deletes it, and `docker history` will still show it.
+
+# --- Never, under any circumstances ----------------------------------------
+# Environment files. The templates carry no values and the real ones carry all
+# of them, so the whole family is excluded rather than the dangerous half: a
+# rule that depends on somebody having named their file correctly is not a rule.
+.env
+.env.*
+
+# Uploaded files written by the local file store. Customer bytes in a real
+# installation, test rubbish here, and neither belongs in an image.
+var/
+
+# --- Rebuilt inside the image ----------------------------------------------
+target/
+
+# --- Belongs to the other image --------------------------------------------
+frontend/
+
+# --- Not needed to compile or to run ---------------------------------------
+.git/
+.github/
+.idea/
+.vscode/
+.claude/
+.mcp.json
+deploy/
+docs/
+*.md
+phase9-plan.txt
+Dockerfile
+.dockerignore
+docker-compose.yml

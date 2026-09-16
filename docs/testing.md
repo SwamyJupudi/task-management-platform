@@ -308,6 +308,77 @@ page size at all was refused by the guard meant for requests naming a large one.
 invariant directly, on all three routes, so the next person to lower the cap is
 told immediately rather than by two unrelated-looking failures.
 
+## The delivery phase
+
+Two tests and two checks that are not JUnit at all, because what this phase
+builds is only partly code.
+
+`EndToEndJourneyIT` is the suite the coverage table above has promised since it
+was written: sign in, create a project, add a member, create a task, assign it,
+complete it. It then keeps going far enough to prove the consequences — that the
+audit trail recorded the day, that the right people were told, that the reports
+moved, and that signing out ends the session.
+
+It is the only class in the suite that **uses almost no fixtures**, and that is
+the entire point of it. Every other test builds its world through
+`IdentityFixtures` or `TaskFixtures` and exercises one endpoint, which is the
+right shape for testing a rule and the wrong one for asking whether the product
+works: the fixtures are a second way of creating the same state, and they skip
+the steps a person cannot skip. Nothing else here would notice if the invitation
+mail stopped carrying a token, if a newly invited account could not sign in, or
+if the access token `/auth/login` mints were rejected by the very next request.
+So the only fixture it uses is the platform administrator, who exists because
+`SuperAdminBootstrap` creates them from the environment and no endpoint can make
+the first one. Every account, token and row after that is created over HTTP by
+the person the story says creates it, carrying the bearer token that person was
+actually issued.
+
+It is also the only class that is **method-ordered**, and the exception is worth
+justifying rather than copying. One story whose steps depend on each other has no
+honest independent form: written as thirteen independent tests, each would
+rebuild the whole preceding journey and the class would test the setup thirteen
+times and the journey once. The cost is that an early failure fails the steps
+after it, so the first failure in report order is the real one — which is why
+each step is named for the part of the day it covers.
+
+What it does not cover is stated in the class and repeated here, because it is
+the half people assume a test called end-to-end includes. MockMvc runs the real
+filter chain, the real security, the real controllers and services against real
+PostgreSQL. It does not run TLS, the edge proxy, the built frontend bundle or a
+browser. That half is the deployment's own smoke test, and splitting them is
+deliberate: this one proves the product's behaviour, that one proves the
+deployment's plumbing.
+
+`AuditRoleSeparationIT` covers `V13`. The first tests read the grant state, which
+is what the migration is directly responsible for; the last one is the one worth
+having, because it creates a login role, grants it the group, connects as it, and
+checks that an `UPDATE` on `activity_logs` is refused **by PostgreSQL rather than
+by the trigger**. A grant that looks right in `pg_catalog` and does not bite is
+exactly the failure it guards against.
+
+Note what that class cannot assert, since it says so itself. The application
+under test connects as the container's superuser, and a superuser bypasses every
+grant, so nothing there proves the *running* application is constrained. That is
+done by a deployment pointing `DB_USERNAME` at a member of the group, which is a
+step in `deployment.md` rather than a line of code — and a test that pretended
+otherwise would be the worst kind, the one that passes because it is asking an
+easier question.
+
+The two checks that are not JUnit both run in CI, beside the suite:
+
+- **`deployment-config`** renders the production compose file with throwaway
+  values, renders the edge template exactly the way the nginx image's entrypoint
+  does, and asks `nginx -t` about the result — for both the edge configuration
+  and the frontend image's own. It is cheap, and it catches the class of mistake
+  otherwise found at deploy time on the production host: a compose file that does
+  not parse, or a typo in a server block.
+- **The smoke test in `deploy.yml`** runs against the public hostname after every
+  release, from the internet rather than from the host, so it exercises DNS, TLS,
+  the edge and the routing. It uses no credential at all, deliberately: an
+  unauthenticated call proves the API is routed, the security chain is running
+  and the shared error envelope was produced, without a standing production login
+  living in a CI secret.
+
 ## Mail in tests
 
 There is no mail transport. `RecordingMailSender` captures messages so a test can

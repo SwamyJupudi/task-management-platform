@@ -24,8 +24,10 @@ Applied so far:
 | `V7`    | Collaboration and audit: `comments`, `comment_mentions`, `attachments` and `activity_logs`, plus the trigger that makes the audit table append only. Eight permissions, mapped and backfilled the same way |
 | `V8`    | `notifications`, with read state and the partial unique index the deadline scan is made idempotent by. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill: a notification has one audience, the person named in it, so there is no grant to hold |
 | `V9`    | **Indexes only.** Eight of them, for the dashboards and reports. No table, no column, no trigger, no constraint and no seed row: phase eight derives every figure from what `V3` to `V7` already store. **No permissions**, and so no `SUPER_ADMIN` mapping and no backfill, for the second time after `V8` and for a different reason: a report is computed over the caller's project read scope, and `project:read_any` already widens it, so a `report:read_any` beside it would be that grant under a second name |
-
 | `V10`   | **The admin panel.** Two permissions, `admin:read_system` and `platform_role:assign`, mapped to `SUPER_ADMIN` and **deliberately backfilled onto no workspace role**: both name platform administration, and `workspace:delete` has been the precedent for that since `V3`. Makes `activity_logs.workspace_id` **nullable** and widens its entity-type check to add `USER` and `ROLE`, so that actions taken outside any workspace can be audited at all. Two indexes. **No table and no column** |
+| `V11`   | **Indexes only**, for the second time after `V9`. `pg_trgm` and six GIN trigram indexes over the lowered expressions the existing searches already used, so a leading-wildcard `LIKE` stops being a sequential scan. **Not one query changed**, deliberately: a query change and an index change in one migration would leave nobody able to say which of the two mattered |
+| `V12`   | The malware scan state of an attachment: `scan_status`, `scan_signature` and `scanned_at`, with a check constraint requiring `scanned_at` on any `CLEAN` row, so only a scanner verdict can produce one. Existing attachments become `PENDING` rather than being backfilled to `CLEAN`, because nothing had inspected them — which is why upgrading a populated installation makes them answer `409` until the rescan job clears the backlog |
+| `V13`   | **Privileges only. No table, no column, no index and no seed row.** Creates the `NOLOGIN` group role `task_platform_app`, puts the runtime privilege set on it, and then takes `UPDATE`, `DELETE` and `TRUNCATE` back on `activity_logs` — the half of the append-only audit trail that `V7` recorded as delivery work, because a trigger can be dropped by the role that owns the table. Inert until a deployment points `DB_USERNAME` at a member of that group; `deployment.md` has the `CREATE ROLE` and the `GRANT` |
 
 A migration that adds a permission carries a second obligation beside the
 `SUPER_ADMIN` mapping: **the workspace roles that already exist need the new
@@ -511,6 +513,102 @@ meaningless.
 
 ## Backup and recovery
 
-Frequency, retention, and the recovery procedure are documented in the delivery
-phase, once the hosting provider is chosen. The requirements demand the
-documentation but state no target values.
+The requirements demand that this be documented and state no target values, so
+the numbers below are decisions rather than transcriptions, and each one says
+what it is tied to. Where a figure has to agree with something else — and two of
+them do — that is stated beside it, because the failure mode of a backup policy
+is two settings that quietly stopped agreeing.
+
+The database is a managed instance, not a container. That is the decision this
+whole section rests on: automated backups, point-in-time recovery and failover
+are the reason for using one, and a PostgreSQL container on the application host
+would have none of the three and a volume nobody is watching.
+
+### What has to be backed up, and what deliberately is not
+
+| Thing                        | Backed up by                                     | If it is lost                                                              |
+| ---------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------- |
+| The database                 | The managed instance's automated backups and WAL | Everything. It is the index of all the work, and of the attachments         |
+| The attachment bucket        | Versioning and the lifecycle rule on the bucket  | The files themselves; the rows describing them would survive and point at nothing |
+| The `.env` on the host       | The `PRODUCTION_ENV` secret, which is the source | Nothing, as long as the secret is intact. The file is derived, not authored |
+| Redis                        | **Nothing, on purpose**                          | Rate-limit counters, which are worthless a second after they are written    |
+| The images                   | GHCR, tagged by commit                           | Rebuildable from the commit they were built from                            |
+
+Redis is the entry worth reading twice. It runs with `--save ""` and
+`--appendonly no`, so it persists nothing at all: it holds counters and no
+durable state, and backing it up would imply it held something worth restoring.
+
+### The policy
+
+| Setting                        | Value    | Tied to                                                                     |
+| ------------------------------ | -------- | ---------------------------------------------------------------------------- |
+| Automated backup               | Daily    | The managed instance's own schedule, in a low-traffic window                 |
+| Backup retention               | 30 days  | **`deploy/aws/lifecycle.json` expires noncurrent object versions after 35.** The bucket's window must stay longer than this one |
+| Point-in-time recovery         | Enabled  | Transaction log retention matching the 30 days above                        |
+| Recovery point objective (RPO) | ≤ 5 min  | What continuous WAL archiving gives; a daily snapshot alone would make this 24 hours |
+| Recovery time objective (RTO)  | ≤ 2 hours | A restore of an instance this size, plus the deployment that repoints at it |
+| Attachment recovery window     | 35 days  | Noncurrent version expiry, which must exceed `ATTACHMENT_PURGE_RETENTION` (30 days) |
+
+Two of those are pairs, and both pairs fail silently if one half moves:
+
+- **Backup retention (30d) < noncurrent version expiry (35d).** A database backup
+  is only restorable in a useful sense if the files its rows refer to still
+  exist. Shorten the bucket's window below the database's and a restore to the
+  oldest available backup comes back with rows pointing at objects that were
+  expired.
+- **`ATTACHMENT_PURGE_RETENTION` (30d) ≤ noncurrent version expiry (35d).** The
+  purge deletes the only current copy of a soft-deleted file. Versioning is what
+  makes that recoverable, and only for as long as the noncurrent version lives.
+
+### Restoring the database and the bucket together
+
+This is the part that is easy to get wrong, and the reason the bucket is
+versioned at all.
+
+The database can be restored to a point in time. **The bucket cannot follow it
+backwards on its own.** Restore the database to 14:00 yesterday and the
+attachment rows are as they were at 14:00; the objects in the bucket are as they
+are now — which means any file deleted since then is gone, and any file uploaded
+since then is an orphan with no row describing it.
+
+So a restore is two operations, in this order:
+
+1. **Stop the application.** Scale it to zero, or stop the backend container. A
+   restore while the application is writing produces a third state that matches
+   neither the backup nor the present.
+2. **Restore the database** to the chosen timestamp, as a new instance rather
+   than in place. The old one is the only evidence of what went wrong and should
+   outlive the incident.
+3. **Roll the bucket forward to the same timestamp**, for the objects that
+   changed. With versioning on, every delete left a delete marker and every
+   overwrite left a noncurrent version, so this is recoverable within the 35-day
+   window: list the versions newer than the target timestamp and remove the
+   delete markers for the objects the restored rows expect.
+4. **Repoint `DB_URL`** at the restored instance and deploy. Nothing else in the
+   environment changes.
+5. **Reconcile what is left.** Files uploaded after the restore point are
+   orphans — objects with no row. They are invisible to the application and cost
+   only storage; the honest thing is to list them and decide, not to delete the
+   bucket's contents to match a database.
+
+Do not skip step 3 because the database came back clean. An attachment whose
+object is missing answers as an error to the person who tries to open it, and
+that is discovered weeks later by a user rather than by the restore.
+
+### The migration role does not change any of this
+
+`V13` splits the runtime and migration roles, and a restore is performed by
+neither: it is done with the instance's master credentials, outside the
+application. The restored database keeps both roles and the group membership,
+because roles are cluster-wide and a restore of the database does not rebuild
+them — which is the one case where a restore into a **new cluster** needs the
+`CREATE ROLE` and `GRANT` from `deployment.md` run again before the application
+will start.
+
+### Rehearsing it
+
+A backup nobody has restored is a hypothesis. Restore to a scratch instance
+once a quarter, point a rehearsal stack at it, and sign in. That exercise is
+what catches the two things a monitoring check never does: that the retention
+window is shorter than somebody assumed, and that the bucket's versions were
+expiring faster than the backups they belong to.

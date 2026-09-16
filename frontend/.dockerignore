@@ -1,0 +1,21 @@
+# The build context for the frontend image.
+#
+# node_modules is the important one: it is reinstalled inside the image from
+# package-lock.json, and copying a host tree in would both bloat the context and
+# risk carrying platform-specific binaries built for the developer's machine
+# into a Linux image.
+node_modules/
+dist/
+
+# Environment files. .env.local holds a developer's own overrides and the
+# bundle bakes VITE_ values in at build time, so a stray file here would end up
+# compiled into the shipped JavaScript.
+.env
+.env.*
+
+.git/
+.idea/
+.vscode/
+*.md
+Dockerfile
+.dockerignore

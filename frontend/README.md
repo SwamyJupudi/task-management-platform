@@ -173,3 +173,23 @@ httpOnly cookie the browser manages.
 
 `src/config/env.ts` reads and validates the environment once at start-up, so
 a missing value fails immediately rather than as an `undefined` later.
+
+## Shipping it
+
+`Dockerfile` builds `dist/` and serves it from nginx: no node, no
+`node_modules`, no source and no source maps reach the runtime image. It runs
+unprivileged on port 8080 with a read-only root filesystem, which is why
+`nginx.conf` moves the pid file and every scratch path under `/tmp`.
+
+`VITE_API_BASE_URL` is **baked into the bundle at build time** — that is how
+Vite works and it cannot be changed at runtime — so the image fixes it at the
+relative `/api/v1` rather than exposing it as a build argument. One image is
+therefore correct in every environment, and the interface and the API stay on
+one origin, which the `SameSite=Strict` refresh cookie requires in order to be
+sent at all. An absolute URL here would produce an image that only works where
+it was built and would break session refresh everywhere else.
+
+The image carries no TLS, no API proxy and no content security policy. All
+three belong to the edge proxy, because all three depend on the deployment
+while this image is built once in CI. See
+[`../docs/deployment.md`](../docs/deployment.md).

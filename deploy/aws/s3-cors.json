@@ -1,0 +1,21 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "https://REPLACE-WITH-PUBLIC-HOSTNAME"
+      ],
+      "AllowedMethods": [
+        "GET"
+      ],
+      "AllowedHeaders": [
+        "*"
+      ],
+      "ExposeHeaders": [
+        "Content-Disposition",
+        "Content-Length",
+        "Content-Type"
+      ],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}

@@ -1,9 +1,15 @@
 name: CI
 
-# Install -> lint -> test -> build, for both halves of the repository.
-# The deploy stage is intentionally absent: no cloud provider has been chosen
-# yet, and inventing one would put an unreviewed decision into the pipeline.
-# It is added in the delivery phase.
+# Install -> lint -> test -> build -> image, for both halves of the repository.
+#
+# The delivery phase added the last stage. Images are built on every run so that
+# a broken Dockerfile fails the pull request that broke it, and pushed to GHCR
+# only from master, so a fork's pull request can never publish one.
+#
+# Deployment is NOT here. It lives in deploy.yml, which this workflow triggers on
+# success, because a deploy needs an approval gate and a different set of
+# permissions, and a job that can reach the production host should not sit in the
+# workflow that pull requests run.
 
 on:
   push:
@@ -127,8 +133,10 @@ jobs:
         run: npm run test -- --run
 
       # VITE_API_BASE_URL is required at module load, and the build bakes it in.
-      # A relative path is what .env.example documents and what the dev proxy
-      # serves; a deployment overrides it with its own value.
+      # The relative path is the deployed value too, not just the development
+      # one: the interface and the API are served from a single origin, because
+      # the refresh cookie is SameSite=Strict and would not be sent across two.
+      # frontend/Dockerfile fixes the same value for the same reason.
       - name: Build
         env:
           VITE_API_BASE_URL: /api/v1
@@ -141,3 +149,151 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
           retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Images
+  #
+  # Built on every run and pushed only from master. A pull request therefore
+  # proves its Dockerfiles still build without being able to publish anything,
+  # which matters because a pull request from a fork runs with a read-only token
+  # and must stay that way.
+  #
+  # `needs` both halves on purpose. An image is only worth building from a
+  # commit whose tests passed, and pushing one from a commit whose tests failed
+  # would put a tag in the registry that nothing should ever deploy.
+  # ---------------------------------------------------------------------------
+  images:
+    name: Images - build and push
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+
+    permissions:
+      contents: read
+      # Only this job gets it, and only for the push below.
+      packages: write
+
+    strategy:
+      # One matrix entry per image, so a failure names the image that broke and
+      # the three build in parallel.
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: .
+            dockerfile: Dockerfile
+          - name: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+          - name: scan-gateway
+            context: deploy/clamav
+            dockerfile: deploy/clamav/Dockerfile
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Skipped entirely on a pull request. Logging in to a registry the run is
+      # not going to push to is an avoidable use of a credential.
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.name }}
+          # The commit SHA is the tag a deployment names, so that what is running
+          # is always traceable to a commit. `latest` is a convenience for
+          # reading the registry and is never what the deploy job pulls.
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && ' and push' || '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub's own cache, so a dependency layer survives between runs.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ---------------------------------------------------------------------------
+  # The deployment artifacts
+  #
+  # Cheap, and it catches the class of mistake that is otherwise found at deploy
+  # time on the production host: a compose file that does not parse, or an nginx
+  # configuration with a typo in it.
+  # ---------------------------------------------------------------------------
+  deployment-config:
+    name: Deployment config - validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Every required variable is given a throwaway value. The file uses the
+      # ${VAR:?message} form for the ones a deployment must set, so this both
+      # renders the file and proves those guards are wired up.
+      - name: Validate the production compose file
+        working-directory: deploy
+        env:
+          APP_SERVER_NAME: app.example.com
+          APP_S3_ORIGIN: https://example-bucket.s3.eu-west-1.amazonaws.com
+          BACKEND_IMAGE: ghcr.io/example/backend:validation
+          FRONTEND_IMAGE: ghcr.io/example/frontend:validation
+          SCAN_GATEWAY_IMAGE: ghcr.io/example/scan-gateway:validation
+          REDIS_PASSWORD: validation-only
+          DB_PASSWORD: validation-only
+        run: |
+          # env_file points at a file the deploy job writes on the host, so it
+          # does not exist here. An empty one is enough to render the config.
+          touch .env
+          docker compose -f docker-compose.prod.yml config > /dev/null
+          echo "docker-compose.prod.yml parses."
+
+      # nginx cannot check a template, only a rendered configuration, so this
+      # renders it exactly the way the image's entrypoint does and then asks
+      # nginx. A throwaway self-signed certificate is generated first because
+      # `nginx -t` opens the certificate files, and a missing one fails the test
+      # for a reason that has nothing to do with the configuration.
+      - name: Validate the edge proxy configuration
+        run: |
+          CERT_DIR="$RUNNER_TEMP/letsencrypt/live/app.example.com"
+          mkdir -p "$CERT_DIR"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj "/CN=app.example.com" \
+            -keyout "$CERT_DIR/privkey.pem" \
+            -out "$CERT_DIR/fullchain.pem" 2>/dev/null
+          cp "$CERT_DIR/fullchain.pem" "$CERT_DIR/chain.pem"
+
+          docker run --rm \
+            -e NGINX_ENVSUBST_FILTER='^APP_' \
+            -e APP_SERVER_NAME=app.example.com \
+            -e APP_S3_ORIGIN=https://example-bucket.s3.eu-west-1.amazonaws.com \
+            -v "$PWD/deploy/nginx/templates:/etc/nginx/templates:ro" \
+            -v "$RUNNER_TEMP/letsencrypt:/etc/letsencrypt:ro" \
+            --entrypoint /bin/sh \
+            nginx:1.27-alpine -c '/docker-entrypoint.sh nginx -t'
+          echo "The edge proxy configuration is valid."
+
+      # The frontend image ships a whole nginx.conf rather than a conf.d
+      # fragment, so it is checked the same way and on its own.
+      - name: Validate the frontend server configuration
+        run: |
+          docker run --rm \
+            -v "$PWD/frontend/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            nginx:1.27-alpine nginx -t
+          echo "The frontend server configuration is valid."

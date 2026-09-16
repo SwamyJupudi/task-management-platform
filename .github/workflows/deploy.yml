@@ -1,0 +1,237 @@
+name: Deploy
+
+# Production deployment. Pulls the images CI built and restarts the stack on the
+# host; it never copies source, and the host builds nothing.
+#
+# WHY THIS IS A SEPARATE WORKFLOW
+#
+# It needs a credential that can reach the production host, and an approval gate.
+# Neither belongs in the workflow that every pull request runs, including pull
+# requests from forks. Keeping them apart means the deployment secrets are
+# readable only by a job that a reviewer has released.
+#
+# WHAT TRIGGERS IT
+#
+#   workflow_run      CI finished successfully on master. The approval gate on
+#                     the `production` environment is what stands between that
+#                     and an actual deployment, so a merge does not deploy on its
+#                     own -- somebody releases it.
+#   workflow_dispatch  A named commit SHA. THIS IS ALSO THE ROLLBACK: every image
+#                     is tagged with the commit that produced it, so going back
+#                     is deploying the previous SHA. See the note on migrations
+#                     at the bottom, which is the case where it is not enough.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Commit SHA to deploy (full 40 characters). Defaults to the current head of master."
+        required: false
+        type: string
+
+concurrency:
+  # Never two deployments at once, and never cancelled halfway: a deployment
+  # interrupted between `pull` and `up` leaves the host in a state nobody chose.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+
+    # Skips the run when CI failed. workflow_run fires on completion regardless
+    # of conclusion, so without this a red build would ask for a deployment.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    environment:
+      # Configure required reviewers on this environment in the repository
+      # settings. That setting, not this file, is what makes the deployment
+      # gated; the environment is also where the secrets below live, so they are
+      # unreadable until a reviewer releases the job.
+      name: production
+      url: https://${{ vars.APP_SERVER_NAME }}
+
+    steps:
+      - name: Work out which commit is being deployed
+        id: target
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            SHA="${{ inputs.image_tag }}"
+          else
+            SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Deploying $SHA"
+
+      # The compose file and the nginx template, at the commit being deployed.
+      # They are configuration rather than source, and they have to move with the
+      # images or the stack is assembled from two different versions.
+      - name: Check out the deployment configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+          sparse-checkout: deploy
+
+      - name: Load the deployment key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Pinned rather than accepted on first use. StrictHostKeyChecking=no
+          # would deploy happily to whatever answers on that address.
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy the deployment configuration to the host
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$TARGET" \
+            "mkdir -p /opt/task-management-platform"
+          # --delete so a file removed from the repository is removed from the
+          # host too, rather than lingering and being included by a wildcard.
+          # .env is excluded: it lives on the host and is written by the next
+          # step, and rsync --delete would otherwise remove it.
+          rsync -az --delete --exclude '.env' \
+            -e "ssh -i ~/.ssh/id_deploy" \
+            deploy/ "$TARGET:/opt/task-management-platform/"
+
+      # One secret holding the whole file, rather than fifteen assembled here.
+      # Assembling it in the workflow would put every variable name in the log's
+      # step list and make a missing one a silent empty value; a single file is
+      # reviewed and rotated as one thing. .env.production.example is its shape.
+      - name: Write the environment file
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+          SHA: ${{ steps.target.outputs.sha }}
+          REGISTRY_PATH: ghcr.io/${{ github.repository }}
+        run: |
+          # umask before the redirect, so the file is never briefly world
+          # readable between being created and being chmod'ed.
+          {
+            printf '%s\n' "$PRODUCTION_ENV"
+            printf '\n# Appended by the deploy workflow. The three image refs are\n'
+            printf '# the only values that change from one deployment to the next.\n'
+            printf 'BACKEND_IMAGE=%s/backend:%s\n'           "$REGISTRY_PATH" "$SHA"
+            printf 'FRONTEND_IMAGE=%s/frontend:%s\n'         "$REGISTRY_PATH" "$SHA"
+            printf 'SCAN_GATEWAY_IMAGE=%s/scan-gateway:%s\n' "$REGISTRY_PATH" "$SHA"
+          } | ssh -i ~/.ssh/id_deploy "$TARGET" \
+                "umask 077 && cat > /opt/task-management-platform/.env"
+
+      - name: Pull the images and restart the stack
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The token is this run's own and expires with it, so nothing
+          # long-lived is left on the host. --password-stdin keeps it out of the
+          # host's process list.
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/id_deploy "$TARGET" \
+            "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
+
+          ssh -i ~/.ssh/id_deploy "$TARGET" bash -euo pipefail <<'REMOTE'
+            cd /opt/task-management-platform
+            docker compose -f docker-compose.prod.yml pull --quiet
+
+            # --remove-orphans so a service deleted from the compose file stops
+            # running. --wait blocks until every health check passes, which is
+            # what turns "the command returned" into "the stack is serving": the
+            # backend's own health check reports readiness, not liveness.
+            #
+            # The order inside is the compose file's business: the scanner must
+            # be healthy before the backend starts, because the backend probes it
+            # during start-up and refuses to run without it.
+            docker compose -f docker-compose.prod.yml up -d \
+              --remove-orphans --wait --wait-timeout 600
+
+            docker logout ghcr.io
+            # Untagged layers from previous deployments. Images still referenced
+            # by a container are untouched, so the previous release stays
+            # pullable by tag for a rollback.
+            docker image prune -f
+          REMOTE
+
+      # From the public internet rather than from the host, so it exercises DNS,
+      # TLS, the edge and the routing rather than just the container.
+      - name: Smoke test
+        env:
+          BASE: https://${{ vars.APP_SERVER_NAME }}
+        run: |
+          set -euo pipefail
+          fail=0
+
+          check() {
+            local name="$1" expected="$2" actual="$3"
+            if [ "$actual" = "$expected" ]; then
+              printf '  %-46s %s\n' "$name" "OK ($actual)"
+            else
+              printf '  %-46s FAILED (got %s, wanted %s)\n' "$name" "$actual" "$expected"
+              fail=1
+            fi
+          }
+
+          echo "Smoke testing $BASE"
+
+          check "the interface is served" 200 \
+            "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/")"
+
+          # A deep link. React Router owns the path and no file sits behind it,
+          # so a 404 here means the history fallback is not wired up.
+          check "a deep link falls back to the document" 200 \
+            "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/projects/smoke-test")"
+
+          check "health reports UP" "UP" \
+            "$(curl -sS "$BASE/actuator/health" | sed -n 's/.*"status":"\([A-Z]*\)".*/\1/p')"
+
+          # No credential is used anywhere in this job, deliberately. An
+          # unauthenticated call proves as much as an authenticated one about
+          # whether the deployment works -- the API is routed, the security chain
+          # is running, and the error handler produced the shared envelope --
+          # without a standing production login living in a CI secret.
+          check "the API refuses an unauthenticated call" 401 \
+            "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/v1/workspaces")"
+
+          check "the plaintext port redirects" 301 \
+            "$(curl -sS -o /dev/null -w '%{http_code}' "http://${{ vars.APP_SERVER_NAME }}/")"
+
+          # Not a status code: the header itself. The interface and the API must
+          # agree about HSTS, and a proxy misconfiguration silently drops it.
+          if curl -sSI "$BASE/" | grep -qi '^strict-transport-security:'; then
+            printf '  %-46s %s\n' "HSTS is set on the document" "OK"
+          else
+            printf '  %-46s FAILED\n' "HSTS is set on the document"
+            fail=1
+          fi
+
+          exit $fail
+
+      - name: Report a failed deployment
+        if: failure()
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          cat <<EOF
+          The deployment of $SHA did not complete.
+
+          To roll back, run this workflow again from the Actions tab with
+          image_tag set to the previous commit SHA. Every image is tagged with
+          the commit that produced it, so the previous release is still in GHCR.
+
+          A ROLLBACK DOES NOT UNDO A MIGRATION. Flyway applies forward only, and
+          a schema change that has run stays run. If this deployment applied one,
+          check whether the previous application version can still work against
+          the new schema before rolling back; if it cannot, the fix is forward.
+          docs/troubleshooting.md has the procedure.
+          EOF

@@ -1,0 +1,483 @@
+# The production stack for a single host.
+#
+# This file is a deployment artifact, unlike the docker-compose.yml at the
+# repository root, which starts a developer's PostgreSQL and nothing else.
+#
+# WHAT IS NOT HERE, AND WHY
+#
+# PostgreSQL, and the object store. The database is a managed instance -- RDS,
+# Cloud SQL or equivalent -- reached over the network through DB_URL, and
+# attachments live in S3. A database container on this host would have no
+# automated backup, no point-in-time recovery, no failover and a volume nobody
+# is watching, which is the opposite of what docs/database.md now commits to.
+# A "rehearsal" profile at the bottom starts stand-ins for both, for bringing
+# this stack up on a laptop; it is not for production and says so.
+#
+# HOW IT IS OPERATED
+#
+# Images come from GHCR, built and pushed by CI. This file and the nginx
+# configuration beside it are copied to the host by the deploy job. The host
+# builds nothing and holds no source.
+#
+#   /opt/task-management-platform/
+#     docker-compose.prod.yml
+#     nginx/templates/app.conf.template
+#     .env                    <- 0600, root-owned, written by the deploy job
+#
+# Start order matters and is enforced by health conditions rather than by
+# sleeps. The scanner must be healthy before the backend starts, because the
+# prod profile probes it during startup and refuses to start without it; see
+# MalwareScanConfig, which documents that this is deliberate.
+
+# A project name distinct from the repository directory, and deliberately so.
+#
+# Compose defaults the project name to the directory it is run from, and the
+# docker-compose.yml at the repository root takes that default. Both files
+# define a service called `postgres`, so without this line a rehearsal run from
+# a developer's clone adopts the development database container as its own and
+# recreates it. The volume survives, but the container does not, and a
+# deployment artifact should not be able to touch a developer's machine at all.
+name: task-management-platform-prod
+
+# ---------------------------------------------------------------------------
+# Shared fragments
+# ---------------------------------------------------------------------------
+x-logging: &logging
+  # Bounded on purpose. The default json-file driver grows without limit, and a
+  # host that fills its disk with logs takes the database connection pool, the
+  # scanner and nginx down with it.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  # No process in any of these containers has any business gaining privileges,
+  # and none of them needs a Linux capability that a server does not.
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  # -------------------------------------------------------------------------
+  # Edge. The only service with published ports, and the single origin the
+  # browser sees: it terminates TLS and routes /api/v1 to the backend and
+  # everything else to the interface. That the two share one origin is not a
+  # convenience -- the refresh cookie is SameSite=Strict, so a browser will not
+  # send it to an API on another site, and sign-in would appear to work and then
+  # drop on every reload.
+  # -------------------------------------------------------------------------
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: tmp-proxy
+    restart: unless-stopped
+    <<: *hardening
+    # Binding 80 and 443 needs the capability back; nothing else is restored.
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Only names beginning APP_ are substituted into the template.
+      # NGINX_ENVSUBST_FILTER is what restricts it, so nginx's own $$host, $$uri
+      # and $$remote_addr survive the pass untouched.
+      NGINX_ENVSUBST_FILTER: "^APP_"
+      APP_SERVER_NAME: ${APP_SERVER_NAME:?set APP_SERVER_NAME to the public hostname}
+      # The object-storage origin the browser is redirected to when it downloads
+      # an attachment. It has to appear in connect-src or the fetch that follows
+      # the redirect is blocked by the page's own content security policy.
+      APP_S3_ORIGIN: ${APP_S3_ORIGIN:?set APP_S3_ORIGIN to the bucket origin, for example https://my-bucket.s3.eu-west-1.amazonaws.com}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - certs:/etc/letsencrypt:ro
+      - acme-challenge:/var/www/certbot:ro
+    networks:
+      - edge
+    # Not read_only: the image's entrypoint renders the template above into
+    # /etc/nginx/conf.d at start-up, which needs a writable filesystem. The
+    # capability set and no-new-privileges are the compensating controls.
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+
+  # -------------------------------------------------------------------------
+  # The interface. Static files and the history fallback; no TLS, no API proxy,
+  # no content security policy. All three belong to the edge, because all three
+  # depend on the deployment and this image is built once in CI.
+  # -------------------------------------------------------------------------
+  frontend:
+    image: ${FRONTEND_IMAGE:?set FRONTEND_IMAGE to a tagged GHCR image}
+    container_name: tmp-frontend
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      # nginx's scratch paths, which frontend/nginx.conf moves here precisely so
+      # that the root filesystem can stay read-only.
+      - /tmp
+    networks:
+      - edge
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  # -------------------------------------------------------------------------
+  # The application.
+  # -------------------------------------------------------------------------
+  backend:
+    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE to a tagged GHCR image}
+    container_name: tmp-backend
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      # Tomcat's multipart staging area. ATTACHMENT_MAX_REQUEST_SIZE is 12MB by
+      # default and uploads are staged here before the scanner sees them, so
+      # this is sized for a handful of concurrent uploads rather than for one.
+      - /tmp:size=256m
+    env_file:
+      # Written by the deploy job from the CI secret store, 0600 and root-owned.
+      # See docs/deployment.md for what belongs in it and what must never.
+      - .env
+    environment:
+      # The values that are a property of this topology rather than of the
+      # environment, so they are fixed here instead of in the env file where
+      # somebody could set them wrongly.
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8080"
+      # The scanner and Redis are reached by service name on the backplane
+      # network. Neither is published.
+      MALWARE_SCAN_URL: http://scan-gateway:8080/scan
+      REDIS_HOST: redis
+    networks:
+      - edge
+      - backplane
+    depends_on:
+      # A hard startup dependency, and the one place this file's ordering is
+      # load-bearing. Under the prod profile the application probes the scanner
+      # while the context refreshes and refuses to start if it does not answer.
+      scan-gateway:
+        condition: service_healthy
+      # Not service_healthy: the rate limiter fails open, so an unreachable
+      # Redis must not be able to stop a deployment. Started is enough.
+      redis:
+        condition: service_started
+    # Above the application's own SHUTDOWN_GRACE_PERIOD, which defaults to 30s.
+    # Below it and Docker would send SIGKILL first, and the graceful shutdown
+    # application-prod.properties configures would never once run.
+    stop_grace_period: 45s
+    deploy:
+      resources:
+        limits:
+          # The JVM is told to use 75% of this by JAVA_TOOL_OPTIONS in the
+          # image, which leaves room for metaspace, thread stacks and direct
+          # buffers inside the same limit.
+          memory: 1G
+    logging: *logging
+
+  # -------------------------------------------------------------------------
+  # Rate-limit counters, and nothing else. Not a cache: the application has no
+  # @EnableCaching and no CacheManager, which is how the rule that a resolved
+  # permission set is never cached is kept by the absence of the machinery.
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: tmp-redis
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    user: "999:999"
+    command:
+      - redis-server
+      # No persistence. The only thing in here is a set of counters that are
+      # worthless the moment they are a second old.
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      # Counters are small and expendable, so a bounded store with an eviction
+      # policy is better than an out-of-memory error on a busy hour.
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+    networks:
+      - backplane
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    healthcheck:
+      # The password is read from the environment inside the container rather
+      # than written on the command line, where the host's process list would
+      # show it.
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging: *logging
+
+  # -------------------------------------------------------------------------
+  # The scanning engine, unmodified. Signatures are a volume rather than an
+  # image layer: freshclam updates them several times a day, and an image that
+  # carried them would ship a stale copy on every deployment.
+  # -------------------------------------------------------------------------
+  clamd:
+    image: clamav/clamav:stable
+    container_name: tmp-clamd
+    restart: unless-stopped
+    # THE ONE SERVICE THAT DOES NOT TAKE *hardening, and this is a deliberate
+    # exception rather than an oversight.
+    #
+    # The upstream image's entrypoint starts as root, takes ownership of the
+    # signature volume, creates /run/clamav and /var/log/clamav, and then drops
+    # to the clamav user itself. Under cap_drop: ALL that sequence fails: the
+    # container starts, fills its log with "Operation not permitted", never
+    # becomes healthy, and takes the backend down with it, because the backend
+    # refuses to start without a scanner. Restoring capabilities one at a time
+    # ends up restoring CHOWN, SETUID, SETGID, FOWNER and DAC_OVERRIDE -- which
+    # is most of what was dropped, for a longer and less honest file.
+    #
+    # So the image is left to manage its own privileges, which it does, and the
+    # controls that actually bound this container are stated instead:
+    #
+    #   - no-new-privileges, so nothing inside can gain more than it starts with
+    #   - no published port, and the backplane network only: the engine is
+    #     reachable from the scan gateway and from nothing else
+    #   - no bind mount. The only volume is its own signature database
+    #   - a memory limit, so a signature database that grows cannot take the host
+    #
+    # The alternative -- running our own ClamAV image -- would mean owning the
+    # engine's packaging and its signature updates, which is exactly what using
+    # the upstream image avoids.
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Keep the signature updater running inside the container. Signatures that
+      # stop being refreshed are the quiet way a malware scanner stops working
+      # while continuing to answer every request with "clean".
+      CLAMAV_NO_FRESHCLAMD: "false"
+      CLAMAV_NO_CLAMD: "false"
+      FRESHCLAM_CHECKS: "4"
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+    networks:
+      - backplane
+    healthcheck:
+      # The image ships clamdcheck.sh, which asks clamd itself rather than
+      # checking that a port is open.
+      test: ["CMD-SHELL", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      # The first start downloads the whole signature database, which takes
+      # minutes on a cold volume and must not be mistaken for a failure.
+      start_period: 360s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          # ClamAV loads the entire signature database into memory. Below about
+          # 1.5G it fails to start, and the failure looks like a crash loop.
+          memory: 2G
+    logging: *logging
+
+  # -------------------------------------------------------------------------
+  # The shim between the application's HTTP scan contract and clamd's INSTREAM
+  # protocol. Small on purpose: the contract HttpMalwareScanner documents is a
+  # status code, which is why the application can stay engine-agnostic.
+  # -------------------------------------------------------------------------
+  scan-gateway:
+    image: ${SCAN_GATEWAY_IMAGE:?set SCAN_GATEWAY_IMAGE to a tagged GHCR image}
+    container_name: tmp-scan-gateway
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    environment:
+      CLAMD_HOST: clamd
+      CLAMD_PORT: "3310"
+      # Bounds what the gateway will read into memory per request. Kept at or
+      # above the application's ATTACHMENT_MAX_SIZE, which is 10MB by default.
+      MAX_SCAN_BYTES: ${MAX_SCAN_BYTES:-16777216}
+    networks:
+      - backplane
+    depends_on:
+      clamd:
+        condition: service_healthy
+    healthcheck:
+      # GET is the reachability probe in the application's contract, and it
+      # answers 200 only while clamd itself is answering. So this health check
+      # asks the same question the backend asks at startup.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/scan', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  # -------------------------------------------------------------------------
+  # Certificate renewal. Under a profile, so the ordinary "up -d" does not start
+  # it: issuance is a one-off documented in docs/deployment.md, and renewal is
+  # driven from the host's scheduler, which is easier to see having failed than
+  # a container in a sleep loop.
+  #
+  #   docker compose -f docker-compose.prod.yml --profile certbot run --rm certbot
+  # -------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: tmp-certbot
+    profiles: ["certbot"]
+    volumes:
+      - certs:/etc/letsencrypt
+      - acme-challenge:/var/www/certbot
+    command: renew --webroot --webroot-path=/var/www/certbot --quiet
+    logging: *logging
+
+  # ===========================================================================
+  # NOT FOR PRODUCTION. The "rehearsal" profile.
+  #
+  # Two stand-ins for the two managed services this stack depends on, so that
+  # the whole thing can be brought up on a laptop and actually exercised:
+  #
+  #   docker compose -f docker-compose.prod.yml --profile rehearsal up -d
+  #
+  # Neither is production-shaped and neither is meant to be. The database has no
+  # backup, no point-in-time recovery and no failover, which is precisely why
+  # production uses a managed instance. The object store is MinIO, which speaks
+  # the S3 API well enough to prove the code path and is not Amazon S3.
+  #
+  # An ordinary `up -d` starts neither: services under a profile are inert until
+  # the profile is named, so production cannot start these by accident.
+  #
+  # docs/deployment.md has the .env values a rehearsal needs.
+  # ===========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: tmp-postgres-rehearsal
+    profiles: ["rehearsal"]
+    environment:
+      POSTGRES_DB: ${DB_NAME:-taskmanagement}
+      POSTGRES_USER: ${DB_USERNAME:-taskmanagement}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    volumes:
+      - rehearsal-db:/var/lib/postgresql/data
+    networks:
+      - backplane
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-taskmanagement} -d ${DB_NAME:-taskmanagement}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  # The prod profile refuses STORAGE_PROVIDER=LOCAL at startup, so a rehearsal
+  # needs something that answers the S3 API. That refusal is the reason this
+  # service exists: without it the stack cannot be rehearsed at all under the
+  # profile it actually runs under, and a rehearsal against different settings
+  # is not a rehearsal.
+  #
+  # Reached through STORAGE_ENDPOINT with STORAGE_PATH_STYLE=true, which the
+  # application has supported since phase six and which every S3-compatible
+  # server but Amazon's own requires.
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: tmp-minio-rehearsal
+    profiles: ["rehearsal"]
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-rehearsal}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-rehearsal-secret}
+    volumes:
+      - rehearsal-objects:/data
+    networks:
+      - backplane
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *logging
+
+  # Creates the bucket and exits. `restart: no` because a one-shot task that
+  # restarts looks like a crash loop in `docker ps`.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: tmp-minio-init-rehearsal
+    profiles: ["rehearsal"]
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set rehearsal http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "rehearsal/$${STORAGE_BUCKET}" &&
+        echo "bucket $${STORAGE_BUCKET} is ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-rehearsal}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-rehearsal-secret}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-attachments}
+    networks:
+      - backplane
+    logging: *logging
+
+# ---------------------------------------------------------------------------
+# Networks
+#
+# Two, so that the only services the edge can reach are the two that should be
+# reachable from it. Redis and the scanner sit on the backplane alone and have
+# no published port, which is the whole of their access control: an
+# unauthenticated Redis lets anybody reset another caller's rate-limit
+# counters, and the scan endpoint accepts arbitrary uploaded bytes.
+#
+# Neither is marked "internal: true". The backend needs the internet for S3 and
+# for the managed database, and clamd needs it for signature updates; an
+# internal network would break all three while looking stricter.
+# ---------------------------------------------------------------------------
+networks:
+  edge:
+    driver: bridge
+  backplane:
+    driver: bridge
+
+volumes:
+  certs:
+  acme-challenge:
+  clamav-signatures:
+  # Both only ever used by the rehearsal profile.
+  rehearsal-db:
+  rehearsal-objects:

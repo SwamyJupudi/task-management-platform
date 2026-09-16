@@ -1,0 +1,240 @@
+# The edge. TLS terminates here, and this is the one origin a browser ever
+# talks to: https://${APP_SERVER_NAME} serves the interface and the API.
+#
+# WHY ONE ORIGIN
+#
+# The refresh token travels in a cookie marked HttpOnly, Secure and
+# SameSite=Strict, path-scoped to /api/v1/auth. SameSite=Strict means a browser
+# will not attach it to a request made from another site, so an interface served
+# from a different hostname than the API would sign a user in successfully and
+# then sign them out on the next reload, because /auth/refresh would arrive with
+# no cookie. Splitting these onto two hostnames is therefore not a deployment
+# preference; it breaks sessions. RefreshTokenCookieCodec says the same thing
+# from the application's side.
+#
+# ENVSUBST
+#
+# The nginx image renders this file into /etc/nginx/conf.d at start-up, with
+# NGINX_ENVSUBST_FILTER set to ^APP_ so that only APP_SERVER_NAME and
+# APP_S3_ORIGIN are substituted. Every $-prefixed nginx variable below --
+# $host, $uri, $remote_addr and the rest -- passes through untouched because of
+# that filter. Removing it would blank all of them.
+
+# ---------------------------------------------------------------------------
+# Anything that is not the configured hostname
+#
+# 444 closes the connection without a response. Certificates are issued for one
+# name; a request arriving on this address under any other name is a scan, a
+# stale DNS record, or somebody pointing their own domain at this host, and none
+# of the three deserves a reply.
+# ---------------------------------------------------------------------------
+server {
+    listen      80 default_server;
+    listen      [::]:80 default_server;
+    server_name _;
+    return      444;
+}
+
+# ---------------------------------------------------------------------------
+# Plain HTTP: the ACME challenge, and a redirect for everything else
+# ---------------------------------------------------------------------------
+server {
+    listen      80;
+    listen      [::]:80;
+    server_name ${APP_SERVER_NAME};
+
+    # Certbot writes its challenge files into this shared volume. It has to stay
+    # on plain HTTP: the redirect below would break issuance on a host that does
+    # not have a valid certificate yet, which is every host the first time.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # 301 rather than 302. The redirect is permanent by policy, and a permanent
+    # one is cached, so a returning browser stops making the plaintext request
+    # at all.
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------------
+# The application
+# ---------------------------------------------------------------------------
+server {
+    listen      443 ssl;
+    listen      [::]:443 ssl;
+    http2       on;
+    server_name ${APP_SERVER_NAME};
+
+    ssl_certificate     /etc/letsencrypt/live/${APP_SERVER_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${APP_SERVER_NAME}/privkey.pem;
+
+    # 1.2 is the floor. 1.0 and 1.1 are withdrawn, and 1.3 is preferred wherever
+    # the client can speak it.
+    ssl_protocols             TLSv1.2 TLSv1.3;
+    ssl_ciphers               ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    # Off because the modern cipher list above is already ordered by preference
+    # and clients pick better than a fixed server order does.
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache         shared:TLS:10m;
+    ssl_session_timeout       1d;
+    ssl_session_tickets       off;
+
+    ssl_stapling              on;
+    ssl_stapling_verify       on;
+    ssl_trusted_certificate   /etc/letsencrypt/live/${APP_SERVER_NAME}/chain.pem;
+
+    # Docker's embedded DNS. Needed twice: for the stapling lookup, and for the
+    # upstream names below.
+    resolver                  127.0.0.11 valid=30s;
+    resolver_timeout          5s;
+
+    # The upstreams, held in variables rather than written into proxy_pass
+    # directly, and this is not a style preference.
+    #
+    # nginx resolves a literal upstream name ONCE, while it parses the
+    # configuration. Two consequences follow, and both have bitten real
+    # deployments. First, nginx refuses to start at all if the name does not
+    # resolve yet, so a proxy that restarted while the backend was being
+    # replaced would stay down instead of waiting. Second, it caches that
+    # address forever, so `docker compose up -d backend` -- which gives the
+    # container a new address -- leaves the proxy sending traffic to an address
+    # nothing is listening on, answering 502 until somebody reloads it.
+    #
+    # With a variable, the name is resolved per request through the resolver
+    # above, which fixes both. proxy_pass with a variable and no URI after it
+    # passes the request URI through unchanged, exactly as the literal form does.
+    set $backend_upstream  backend;
+    set $frontend_upstream frontend;
+
+    server_tokens off;
+
+    # DELIBERATELY ABOVE the application's own limit.
+    #
+    # spring.servlet.multipart.max-request-size is 12MB by default, and the
+    # application answers an oversized upload with its own error envelope and a
+    # useful message. If nginx refused first the caller would get an nginx error
+    # page instead, so the proxy's limit is a backstop against a body large
+    # enough to be an attack rather than a mistake, and the application's limit
+    # is the one users actually meet.
+    client_max_body_size 16m;
+
+    # The scan happens inside the upload request and MALWARE_SCAN_TIMEOUT is 10s
+    # by default, so an upload can legitimately take longer than nginx's 60s
+    # default on a busy scanner.
+    proxy_read_timeout    120s;
+    proxy_send_timeout    120s;
+    proxy_connect_timeout 5s;
+
+    # -----------------------------------------------------------------------
+    # The edge's own liveness. Answered here, without touching an upstream, so
+    # that a 200 means "nginx is up" and nothing more. The compose health check
+    # for this container asks exactly this.
+    # -----------------------------------------------------------------------
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return     200 "ok\n";
+    }
+
+    # -----------------------------------------------------------------------
+    # The API
+    # -----------------------------------------------------------------------
+    location /api/v1/ {
+        proxy_pass http://$backend_upstream:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+
+        # $remote_addr, NOT $proxy_add_x_forwarded_for, and this is a security
+        # control rather than a style choice.
+        #
+        # The application sets server.forward-headers-strategy=framework, so
+        # Spring's ForwardedHeaderFilter rewrites getRemoteAddr() from this
+        # header, and RateLimitFilter keys its per-address limits on
+        # getRemoteAddr(). $proxy_add_x_forwarded_for APPENDS to whatever the
+        # client sent, leaving the client's own value first, so anybody could
+        # send "X-Forwarded-For: 1.2.3.4" and be rate-limited as a fresh address
+        # on every request. Overwriting is what makes the limiter work at all.
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+
+        # Cleared for the same reason. ForwardedHeaderFilter reads the RFC 7239
+        # Forwarded header in preference to the X-Forwarded-* set above, so a
+        # client-supplied one would win over everything just set.
+        proxy_set_header Forwarded         "";
+
+        # The application writes its own security headers on API responses,
+        # including a strict Content-Security-Policy and HSTS. Nothing is added
+        # here: two Content-Security-Policy headers on one response are
+        # intersected rather than chosen between, and two HSTS headers are
+        # simply ambiguous.
+    }
+
+    # -----------------------------------------------------------------------
+    # Health, for an external uptime check.
+    #
+    # An exact match, so /actuator/health/liveness, /actuator/health/readiness
+    # and every other actuator endpoint stay unreachable from outside. Those are
+    # for the orchestrator, on the internal network. The body here is
+    # {"status":"UP"} and nothing more, because the prod profile sets
+    # management.endpoint.health.show-details=never.
+    # -----------------------------------------------------------------------
+    location = /actuator/health {
+        access_log off;
+        proxy_pass http://$backend_upstream:8080/actuator/health;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Forwarded         "";
+    }
+
+    # -----------------------------------------------------------------------
+    # The interface
+    # -----------------------------------------------------------------------
+    location / {
+        proxy_pass http://$frontend_upstream:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Forwarded         "";
+
+        # The document's own policy, set here rather than in the frontend image
+        # because connect-src has to name the object-storage origin, which is a
+        # property of the deployment and not of the built files.
+        #
+        # connect-src needs ${APP_S3_ORIGIN} because an attachment download is a
+        # fetch, not a link: the client sends the bearer token, the API answers
+        # 302 to a presigned URL, and fetch follows that redirect to the bucket.
+        # Without the bucket here the download is blocked by this policy, and
+        # without the matching bucket CORS rule it is blocked by the browser's
+        # same-origin rule -- see deploy/aws/s3-cors.json.
+        #
+        # style-src allows 'unsafe-inline' and script-src does not. The
+        # component library sets element styles inline, which cannot be
+        # nonce'd; scripts are all files emitted by the build, so the dangerous
+        # half of the policy stays strict.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${APP_S3_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+
+        # One year, with subdomains, matching what the application sends on API
+        # responses. Both halves of one origin should not disagree about this.
+        #
+        # Note what includeSubDomains commits to: every subdomain of
+        # ${APP_SERVER_NAME} must be reachable over HTTPS from the moment a
+        # browser sees this, and the commitment is cached for a year.
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+        # The interface is never framed and never referred from.
+        add_header X-Frame-Options        "DENY"        always;
+        add_header X-Content-Type-Options "nosniff"     always;
+        add_header Referrer-Policy        "no-referrer" always;
+        add_header Permissions-Policy     "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+    }
+}

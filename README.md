@@ -5,12 +5,15 @@ workflows, and reporting. Requirements live in
 [`docs/project-requirements.pdf`](docs/project-requirements.pdf), which is the
 source of truth for scope.
 
-**Current state: admin panel phase.** The shared infrastructure is in place, and
-so are accounts, authentication, role-based authorization scoped to a workspace,
+**Current state: deliverable.** The shared infrastructure is in place, and so
+are accounts, authentication, role-based authorization scoped to a workspace,
 workspace settings and lifecycle, teams, projects, tasks with their subtasks and
 dependencies, comments, mentions, attachments, the audit trail, notifications
-with their deadline scan, dashboards and reports, and now the admin panel. What
-remains is hardening and delivery. See [Project status](#project-status).
+with their deadline scan, dashboards and reports, the admin panel, the hardening
+phase, and now delivery: images, a production stack, a gated deployment
+pipeline, a backup and recovery policy, and an end-to-end suite that walks one
+working day through the API. Every phase of the build order is built. See
+[Project status](#project-status) and [`docs/deployment.md`](docs/deployment.md).
 
 ---
 
@@ -103,6 +106,21 @@ Set the profile with `SPRING_PROFILES_ACTIVE`, or with
 
 ---
 
+## Deploying it
+
+One host running [`deploy/docker-compose.prod.yml`](deploy/docker-compose.prod.yml),
+with a managed PostgreSQL instance and an object store beside it. Images come
+from the registry, built by CI and tagged with the commit that produced them;
+the host builds nothing.
+
+[`docs/deployment.md`](docs/deployment.md) is the whole of it: what has to exist
+before the first deployment, the two database roles and why there are two, the
+certificate, the secrets, rolling back, and how to rehearse the entire stack on
+a laptop. When something is broken rather than being deployed,
+[`docs/troubleshooting.md`](docs/troubleshooting.md) is the other half.
+
+---
+
 ## Tests
 
 Tests are split by what they need to run.
@@ -119,6 +137,13 @@ which keeps the build usable on a machine that has no Docker. Continuous
 integration checks that Docker is present and fails if these tests were skipped,
 so the skip can never hide a break.
 
+`EndToEndJourneyIT` is the one to read first if you want to know what the
+product does. It signs in, creates a workspace, invites two people who have no
+account yet, redeems both invitations, creates a project, adds a member, raises
+a task, assigns it, completes it, and then checks the audit trail, the
+notifications and the reports — all over HTTP, using almost no fixtures,
+because the fixtures skip the steps a person cannot skip.
+
 See [`docs/testing.md`](docs/testing.md).
 
 ---
@@ -127,8 +152,19 @@ See [`docs/testing.md`](docs/testing.md).
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to a
 protected or working branch and on every pull request: install, lint, test,
-build. The deploy stage is not wired yet because no cloud provider has been
-chosen; adding one would put an unreviewed decision into the pipeline.
+build, and then the three images. Images are built on every run, so a broken
+Dockerfile fails the pull request that broke it, and pushed to GHCR only from
+`master`, so a fork's pull request can never publish one. A fourth job renders
+and validates the production compose file and both nginx configurations, which
+catches at review time the mistakes that would otherwise be found on the
+production host.
+
+Deployment is a separate workflow,
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It needs a
+credential that can reach the production host and an approval gate, and neither
+belongs in the workflow that every pull request runs. A merge does not deploy on
+its own: somebody releases it. See
+[`docs/deployment.md`](docs/deployment.md).
 
 Lint is Spotless. Run `./mvnw spotless:apply` to fix formatting locally before
 pushing.
@@ -137,9 +173,14 @@ pushing.
 
 ## Branching
 
-`main` is production. `develop` is the integration branch. Work happens on
-`feature/*`, `bugfix/*`, or `hotfix/*` and reaches `develop` through a reviewed
-pull request. Nothing is pushed straight to `main`.
+`master` is production: CI runs on it and on every pull request into it, images
+are pushed to the registry from it alone, and it is what the deployment
+workflow watches. Work happens on `feat/*`, `feature/*`, `bugfix/*` or
+`hotfix/*` and reaches `master` through a reviewed pull request. Nothing is
+pushed straight to `master`.
+
+Merging does not deploy. It makes a release available to be deployed, and a
+reviewer releases it.
 
 ---
 
@@ -158,8 +199,8 @@ The build order is set out in [`docs/architecture.md`](docs/architecture.md).
 | 7     | Notifications                             | Done        |
 | 8     | Dashboards and reports                    | Done        |
 | 9     | Admin panel                               | Done        |
-| 10    | Hardening                                 | Not started |
-| 11    | Delivery: environments, deployment, docs  | Not started |
+| 10    | Hardening                                 | Done        |
+| 11    | Delivery: environments, deployment, docs  | Done        |
 
 The React frontend starts alongside phase two.
 
@@ -429,3 +470,67 @@ Uploaded files are not scanned for malware, and removing one leaves its bytes in
 storage for a purge that does not exist yet. Both sit with the rest of the upload
 security work in the hardening phase, and both are recorded under *Still open* in
 [`docs/architecture.md`](docs/architecture.md) rather than left to be discovered.
+
+### What the hardening phase delivers
+
+- Rate limiting in two places: address-keyed limits in the security chain,
+  before authentication, and account-keyed limits in the services where the
+  address arrives in the request body. Redis backs the counters and nothing
+  else — caching is deliberately not switched on, so a resolved permission set
+  has no machinery to be cached in.
+- Security headers, request completion logging, and container-aware sizing.
+- Trigram search indexes, so the substring searches that already existed stop
+  being sequential scans. Not one query changed.
+- Malware scanning as a provider-agnostic port, scanned before anything is
+  stored. Production fails closed: the scanner is probed at startup and the
+  application will not start without it.
+- Two scheduled purges — expired tokens, and the bytes behind long-deleted
+  attachments — both off by default, so a deployment opts into deletion rather
+  than discovering it.
+
+### What the delivery phase delivers
+
+- Three images, built by CI and tagged with the commit that produced them, and a
+  production stack in [`deploy/`](deploy) that pulls them. The host builds
+  nothing and holds no source.
+- One origin behind an edge proxy that terminates TLS, because the refresh
+  cookie is `SameSite=Strict` and an interface on a second hostname would sign
+  people in and then drop them on the next reload.
+- A gated deployment: CI on `master` proposes a release, a reviewer releases it,
+  and the job ends with a smoke test against the public hostname that uses no
+  credential at all. Rolling back is deploying the previous commit's images.
+- The privilege half of the append-only audit trail. `V13` puts the runtime
+  privileges on a group role that holds `SELECT` and `INSERT` on `activity_logs`
+  and not `UPDATE`, `DELETE` or `TRUNCATE`, so the trigger that refuses edits
+  can no longer simply be dropped by the role the application connects as.
+- A backup and recovery policy with the numbers written down, including the part
+  people forget: the bucket has to be restored to the same point as the
+  database, or the rows and the files disagree. See
+  [`docs/database.md`](docs/database.md#backup-and-recovery).
+- The end-to-end suite, and two documents that did not exist:
+  [`docs/deployment.md`](docs/deployment.md) and
+  [`docs/troubleshooting.md`](docs/troubleshooting.md).
+
+### What the delivery phase deliberately does not deliver
+
+No infrastructure as code. One host, one managed database and one bucket are
+created by the commands in [`docs/deployment.md`](docs/deployment.md) and
+[`deploy/aws/README.md`](deploy/aws/README.md); inventing a Terraform layout
+nobody reviewed would put an unapproved decision in the repository.
+
+No staging environment. The compose file's `rehearsal` profile starts stand-ins
+for the database and the object store so the whole stack can be brought up on a
+laptop under the `prod` profile, which is the only thing that makes it a
+rehearsal. A second host with its own database and bucket would be the honest
+version, and that is a cost decision rather than a technical one.
+
+No horizontal scaling that anyone has exercised. The compose file runs one of
+everything. Two backends behind the same proxy should work — the application
+holds no session state, and the scheduled jobs take an advisory lock precisely so
+that two instances do not both run them — but it has not been tried, and saying
+so is worth more than a replica count that has not.
+
+No audit retention. `activity_logs` is append-only and nothing prunes it. How
+long an audit trail is kept is a policy question, possibly a legal one, and it is
+recorded under *Still open* in [`docs/architecture.md`](docs/architecture.md)
+rather than answered by whoever happened to be writing the purge.
