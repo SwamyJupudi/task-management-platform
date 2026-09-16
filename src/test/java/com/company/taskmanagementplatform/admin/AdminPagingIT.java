@@ -139,20 +139,62 @@ class AdminPagingIT extends AdminApiTestBase {
                 .andExpect(jsonPath("$.totalElements").value(org.hamcrest.Matchers.greaterThanOrEqualTo(2)));
     }
 
+    /**
+     * The two account filters, asserted against an account this test owns.
+     *
+     * <p><strong>It used to ask the whole installation whether anybody was locked, and expect
+     * nobody.</strong> That passed for one reason only: until the lockout was fixed, no test in the
+     * suite could produce a locked account, because the failure counter was rolled back by the
+     * exception that reported the wrong password. The moment {@code AccountLockoutIT} could leave
+     * genuinely locked accounts behind, this assertion started depending on whether that class had
+     * run yet — which is a property of the order Failsafe happens to walk the filesystem in, and
+     * differs between a developer's machine and the runner. It passed locally and failed on CI.
+     *
+     * <p>The container is shared by the whole suite and never truncated, exactly as {@code
+     * AbstractIntegrationTest} says, so no test may assert a count over the installation. This one
+     * now searches for an address it created a moment ago, which narrows every query to one row it
+     * knows everything about.
+     *
+     * <p>The assertion is unchanged in strength and in kind. A filter that ignored {@code locked}
+     * would return that account and fail, which is the failure mode the original comment named; the
+     * difference is that the proof no longer depends on what the rest of the suite left behind.
+     */
     @Test
     void theAccountDirectoryFiltersByStatusAndLockState() throws Exception {
         Estate estate = estate();
         String platform = bearer(estate.platformAdminId());
 
+        // Active, never locked, and named uniquely, so `search` reaches this row and
+        // no other. UserQueryService matches the term against the address.
+        String subject = uniqueEmail("directory-filter");
+        fixtures.verifiedUser(subject);
+
+        // Present when it is not filtered at all, which is what makes the two
+        // assertions below mean something.
         mockMvc.perform(get(PLATFORM_ACCOUNTS)
+                        .param("search", subject)
+                        .header(HttpHeaders.AUTHORIZATION, platform))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].email").value(subject))
+                // Nulls are serialised, so this is a value assertion rather than an
+                // absence one: the row is there and it is genuinely not locked.
+                .andExpect(jsonPath("$.content[0].lockedUntil").value(org.hamcrest.Matchers.nullValue()));
+
+        // Still present under the status it actually holds.
+        mockMvc.perform(get(PLATFORM_ACCOUNTS)
+                        .param("search", subject)
                         .param("status", "ACTIVE")
                         .header(HttpHeaders.AUTHORIZATION, platform))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].email").value(subject));
 
-        // Nobody in this fixture is locked, so the filter proves itself by
+        // And gone under a filter it does not satisfy. The filter proves itself by
         // returning nothing rather than everything, which is the failure mode that
         // matters for a filter.
         mockMvc.perform(get(PLATFORM_ACCOUNTS)
+                        .param("search", subject)
                         .param("locked", "true")
                         .header(HttpHeaders.AUTHORIZATION, platform))
                 .andExpect(status().isOk())
