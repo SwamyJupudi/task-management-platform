@@ -129,7 +129,16 @@ jobs:
       # `--run` because Vitest watches by default, which would hang a pipeline.
       # Placed before the build: a failing assertion is a clearer report than a
       # bundle that succeeds and tells you nothing.
+      #
+      # VITE_API_BASE_URL is set here for the same reason the build below sets
+      # it: src/config/env.ts validates the environment at module load and
+      # throws on a missing value, so importing anything that reaches it fails
+      # the whole run. A developer's machine supplies it from .env.local, which
+      # is git-ignored and therefore absent here — which is exactly why this
+      # passed locally and failed in CI.
       - name: Test
+        env:
+          VITE_API_BASE_URL: /api/v1
         run: npm run test -- --run
 
       # VITE_API_BASE_URL is required at module load, and the build bakes it in.
