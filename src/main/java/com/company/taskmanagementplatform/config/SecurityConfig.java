@@ -17,6 +17,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -91,7 +93,8 @@ public class SecurityConfig {
             JwtAuthenticationFilter jwtAuthenticationFilter,
             RateLimitFilter rateLimitFilter,
             RestAuthenticationEntryPoint authenticationEntryPoint,
-            RestAccessDeniedHandler accessDeniedHandler)
+            RestAccessDeniedHandler accessDeniedHandler,
+            Environment environment)
             throws Exception {
 
         return http.cors(cors -> cors.configurationSource(corsSource))
@@ -107,7 +110,14 @@ public class SecurityConfig {
                         // than four registrations, because two content security
                         // policies on one response are intersected rather than
                         // chosen between; ResponseSecurityHeaders says why at length.
-                        .addHeaderWriter(new ResponseSecurityHeaders()))
+                        //
+                        // The demo profile serves the built interface from this process,
+                        // and a document needs a policy that permits its own scripts and
+                        // styles. The same profile gates SpaResourceConfig, so the policy
+                        // and the thing it covers are switched on together; every other
+                        // deployment returns JSON here and keeps default-src 'none'.
+                        .addHeaderWriter(
+                                new ResponseSecurityHeaders(environment.acceptsProfiles(Profiles.of("demo")))))
                 // Both produce the shared error body. Without them a failure inside
                 // the filter chain would return a container error page, because the
                 // @RestControllerAdvice never sees it.

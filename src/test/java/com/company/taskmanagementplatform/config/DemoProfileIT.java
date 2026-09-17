@@ -2,6 +2,7 @@ package com.company.taskmanagementplatform.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,11 @@ import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
  * here stop at the configuration being loadable. What is asserted instead is the part that would
  * actually be dangerous if it were wrong: that serving a bundle from this application has not opened
  * the API to anonymous callers.
+ *
+ * <p>The content security policy <em>is</em> covered, and needs no bundle to be: the header is written
+ * for every response whatever its status, so the 404 this returns without one carries the same policy
+ * the document would. That gap is why the demo shipped a blank page once already - the strict policy
+ * refused the bundle's own script and stylesheet, and nothing here noticed.
  */
 @ActiveProfiles({"test", "demo"})
 class DemoProfileIT extends AbstractIntegrationTest {
@@ -70,6 +76,32 @@ class DemoProfileIT extends AbstractIntegrationTest {
         // have been a mapped endpoint that answers anonymously; a resource handler
         // adds no mapping, so the security chain is exactly what it was.
         mockMvc.perform(get("/api/v1/workspaces")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void theDocumentGetsThePolicyTheBundleCanRunUnder() throws Exception {
+        // default-src 'none' here is what made the deployed demo a blank page: it
+        // refused /assets/index-*.js and /assets/index-*.css, which are the bundle's
+        // own files on its own origin.
+        mockMvc.perform(get("/"))
+                .andExpect(header().string(
+                        ResponseSecurityHeaders.CONTENT_SECURITY_POLICY_HEADER,
+                        ResponseSecurityHeaders.APP_CONTENT_SECURITY_POLICY));
+
+        mockMvc.perform(get("/assets/index-abc123.js"))
+                .andExpect(header().string(
+                        ResponseSecurityHeaders.CONTENT_SECURITY_POLICY_HEADER,
+                        ResponseSecurityHeaders.APP_CONTENT_SECURITY_POLICY));
+    }
+
+    @Test
+    void theApiKeepsTheStrictPolicyUnderThisProfileToo() throws Exception {
+        // Serving a document from this process must not loosen the policy on JSON,
+        // and an attachment download is served under the API path as well.
+        mockMvc.perform(get("/api/v1/workspaces"))
+                .andExpect(header().string(
+                        ResponseSecurityHeaders.CONTENT_SECURITY_POLICY_HEADER,
+                        ResponseSecurityHeaders.API_CONTENT_SECURITY_POLICY));
     }
 
     @Test
