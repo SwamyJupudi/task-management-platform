@@ -78,7 +78,7 @@ export interface PlatformAccount {
   email: string
   firstName: string
   lastName: string
-  /** `ACTIVE`, `PENDING_VERIFICATION`, `DEACTIVATED`. */
+  /** `ACTIVE`, `PENDING_APPROVAL`, `DEACTIVATED`. */
   status: string
   emailVerified: boolean
   platformAdministrator: boolean
@@ -152,6 +152,18 @@ export interface WorkspaceSummary {
 }
 
 /** `GET /admin/accounts`. */
+/**
+ * What an administrator decides when letting somebody in.
+ *
+ * The workspace is not here: it is in the path, because it is what the caller's
+ * right to approve is checked against. The project is optional — work can be
+ * assigned later.
+ */
+export interface ApproveAccountInput {
+  roleSlug: string
+  projectId?: string | undefined
+}
+
 export interface AccountFilters {
   search?: string | undefined
   status?: string | undefined

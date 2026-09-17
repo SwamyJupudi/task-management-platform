@@ -11,6 +11,7 @@ import * as adminApi from './api'
 import { ACTIVITY_PAGE_SIZE, PAGE_SIZE, WORKSPACE_OPTION_SIZE } from './constants'
 import type {
   AccountFilters,
+  ApproveAccountInput,
   PermissionEntry,
   PlatformAccount,
   PlatformProject,
@@ -193,6 +194,52 @@ export function useWorkspaceOptions(): UseQueryResult<WorkspaceSummary[]> {
  * to fill a dropdown. Sharing a key between them would make the pickers on the
  * roles and teams screens jump to whatever page this listing was last on.
  */
+/**
+ * The approval queue.
+ *
+ * No endpoint of its own: a waiting account is an account, and the directory
+ * already filtered by status. Sorted oldest first, because the person who has
+ * been waiting longest is the one to deal with next — the opposite of the
+ * newest-first default everywhere else in this panel.
+ */
+export function usePendingAccounts(page: number): UseQueryResult<Page<PlatformAccount>> {
+  const { canReadAccounts } = useAdminPermissions()
+
+  return useQuery({
+    queryKey: [...adminRoot, 'pending-accounts', page],
+    queryFn: () => adminApi.accounts({ status: 'PENDING_APPROVAL' }, page, PAGE_SIZE, 'createdAt,asc'),
+    enabled: canReadAccounts,
+    staleTime: STALE_MS,
+    placeholderData: (previous) => previous,
+  })
+}
+
+/**
+ * Approving somebody, and refreshing everything that just changed.
+ *
+ * The whole admin root is invalidated rather than the queue alone: the account
+ * left the queue, joined a workspace, and may have joined a project, and three
+ * separate lists now describe a world that has moved.
+ */
+export function useApproveAccount() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({
+      workspaceId,
+      userId,
+      body,
+    }: {
+      workspaceId: string
+      userId: string
+      body: ApproveAccountInput
+    }) => adminApi.approveAccount(workspaceId, userId, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin })
+    },
+  })
+}
+
 export function useWorkspaces(page: number): UseQueryResult<Page<WorkspaceSummary>> {
   const { canListWorkspaces } = useAdminPermissions()
 
@@ -233,14 +280,7 @@ export function useWorkspaceMutations() {
     onSuccess: invalidate,
   })
 
-  // No invalidation: an invitation changes nothing this panel displays. It is
-  // the people screen inside that workspace that lists them.
-  const inviteSelf = useMutation({
-    mutationFn: ({ workspaceId, email }: { workspaceId: string; email: string }) =>
-      adminApi.inviteToWorkspace(workspaceId, email),
-  })
-
-  return { create, remove, inviteSelf }
+  return { create, remove }
 }
 
 /**

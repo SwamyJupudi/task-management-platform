@@ -3,6 +3,7 @@ import { api, type Page } from '@/lib/api'
 import type { ActivityEntry } from '@/types/activity'
 
 import type {
+  ApproveAccountInput,
   Account,
   AccountFilters,
   PermissionEntry,
@@ -117,6 +118,28 @@ export function platformActivity(page: number, size: number): Promise<Page<Activ
 // --- account administration (`/users`) --------------------------------------
 
 /** `PATCH /users/{id}`. Name only; needs `user:update`. */
+/**
+ * `POST /workspaces/{id}/pending-users/{userId}/approve`. Needs `member:invite`
+ * in that workspace, which a workspace ADMIN holds and a platform role satisfies
+ * anywhere.
+ *
+ * The workspace is in the path rather than the body because it is the thing
+ * being authorised: the caller's right to approve is their right to bring
+ * somebody into that particular workspace.
+ *
+ * The whole of onboarding in one request: it grants the workspace role and,
+ * when a project is named, the project membership, then activates the account —
+ * all in one transaction on the server, so a half-admitted person is not a state
+ * this screen can produce.
+ */
+export function approveAccount(
+  workspaceId: string,
+  userId: string,
+  body: ApproveAccountInput,
+): Promise<Account> {
+  return api.post<Account>(`/workspaces/${workspaceId}/pending-users/${userId}/approve`, body)
+}
+
 export function updateAccount(userId: string, body: UpdateAccountInput): Promise<Account> {
   return api.patch<Account>(`/users/${userId}`, body)
 }
@@ -222,21 +245,6 @@ export function createWorkspace(body: { name: string; slug: string }): Promise<W
  */
 export function deleteWorkspace(workspaceId: string): Promise<void> {
   return api.delete<void>(`/workspaces/${workspaceId}`)
-}
-
-/**
- * `POST /workspaces/{id}/invitations`. Needs `member:invite`, which a platform
- * role satisfies for any workspace.
- *
- * Here for one reason: a workspace's creator is not in it, and inviting
- * themselves is the only route in that uses an endpoint that already exists.
- * The people feature owns invitations properly — the list, the withdrawal, the
- * roster — and this does not reach into it for one call, because that would
- * make a screen in this panel depend on the internals of a workspace-scoped
- * feature it otherwise has nothing to do with.
- */
-export function inviteToWorkspace(workspaceId: string, email: string): Promise<unknown> {
-  return api.post<unknown>(`/workspaces/${workspaceId}/invitations`, { email })
 }
 
 /** `GET /permissions`. The global catalog, written by migrations. Needs `permission:read`. */

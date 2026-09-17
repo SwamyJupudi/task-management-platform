@@ -13,17 +13,13 @@ import { useSessionStore } from '@/stores/session-store'
 
 import * as authApi from './api'
 import type {
-  AcceptedInvitation,
-  AcceptInvitationBody,
   AccountUser,
   AuthTokens,
-  InvitationPreview,
 } from './types'
 import {
   bootstrapSession,
   endSession,
   establishSession,
-  reloadCurrentUser,
 } from './session-manager'
 
 /**
@@ -137,90 +133,6 @@ export function useResetPassword(): UseMutationResult<
   return useMutation({ mutationFn: authApi.resetPassword })
 }
 
-/**
- * What an invitation link points at, before anybody acts on it.
- *
- * A query rather than a one-shot effect, because unlike verifying an address
- * this reads without spending anything: the token stays redeemable, so a
- * refetch or a second mount costs nothing and the screen can offer a retry.
- *
- * It never retries on its own. A rejected token is rejected for a reason that
- * asking again does not change, and the shared client already refuses to retry
- * a 401; this says so at the query as well so a network blip is the only thing
- * that can cause a second request.
- */
-export function useInvitationPreview(token: string | null) {
-  return useQuery<InvitationPreview>({
-    queryKey: [...queryKeys.auth, 'invitation', token],
-    queryFn: () => authApi.previewInvitation(token as string),
-    enabled: token !== null && token !== '',
-    retry: false,
-    // The token is single-use and the answer changes the moment it is spent,
-    // so nothing here is worth keeping between visits.
-    staleTime: 0,
-    gcTime: 0,
-  })
-}
-
-/**
- * Redeems an invitation, and leaves the session describing the new reality.
- *
- * Three steps rather than one, and the order is the point:
- *
- *  1. Accept. The response names the workspace that was joined.
- *  2. Put a session in place. Somebody who already had an account keeps theirs
- *     and only needs `/auth/me` read again, because their membership list has
- *     just changed and nothing else would tell the interface. Somebody whose
- *     account was created by the acceptance has no session at all, so this
- *     signs them in with the credentials they just chose — the account is
- *     created already verified, which is what makes that possible.
- *  3. Drop cached queries. Anything read before this belongs to a smaller set
- *     of workspaces, and the caller is about to be sent into a new one.
- *
- * A failure at step two is not a failure of the acceptance: the person is in
- * the workspace either way. The screen says so and sends them to sign in.
- */
-export function useAcceptInvitation(): UseMutationResult<
-  AcceptedInvitation & { signedIn: boolean },
-  unknown,
-  { body: AcceptInvitationBody; authenticated: boolean; signInWith?: string }
-> {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async ({ body, authenticated, signInWith }) => {
-      const accepted = await authApi.acceptInvitation(body, authenticated)
-
-      if (authenticated) {
-        await reloadCurrentUser()
-        return { ...accepted, signedIn: true }
-      }
-
-      if (signInWith === undefined) return { ...accepted, signedIn: false }
-
-      try {
-        const tokens = await authApi.login({ email: signInWith, password: body.password ?? '' })
-        await establishSession(tokens)
-        return { ...accepted, signedIn: true }
-      } catch {
-        // The membership is real and committed; only the convenience of
-        // arriving signed in was lost. Reported rather than thrown.
-        return { ...accepted, signedIn: false }
-      }
-    },
-    onSuccess: () => {
-      queryClient.clear()
-    },
-  })
-}
-
-/**
- * Ends the session.
- *
- * The local half runs whether or not the server call succeeds. A network
- * failure must not leave somebody who asked to sign out still signed in, and
- * the refresh cookie is the only thing that could revive the session.
- */
 export function useLogout(): UseMutationResult<void, unknown, void> {
   const queryClient = useQueryClient()
 

@@ -14,16 +14,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.company.taskmanagementplatform.common.security.AccountStatusProvider;
-import com.company.taskmanagementplatform.support.TestSecurityProperties;
 
 /**
  * Whether a token issued for an account is still honoured, which is the one question the
  * authentication filter asks on every authenticated request.
  *
- * <p>This is where {@code app.security.require-email-verification} is honoured for an established
- * session, and the tests exist because getting only half of it right shipped a demo that signed
- * people in and then refused every request they made: the sign-in check was relaxed and this one was
- * not, so the filter answered {@code ACCOUNT_INACTIVE} to a token it had just caused to be issued.
+ * <p>The interesting case is the account waiting for approval. It must be usable, or somebody who
+ * has just registered would sign in successfully and then be refused every request they made — and
+ * it must grant nothing, which it does not, because every workspace, project and task is reached
+ * through a membership an unapproved account does not have.
  */
 @ExtendWith(MockitoExtension.class)
 class AccountStatusAdapterTest {
@@ -34,50 +33,41 @@ class AccountStatusAdapterTest {
     private UserRepository users;
 
     @Test
-    void refusesAnUnverifiedAccountWhereVerificationIsRequired() {
-        // Production. A token for an unconfirmed address is not honoured.
-        assertThat(state(pending(), true).usable()).isFalse();
+    void answersForAnAccountWaitingForApproval() {
+        assertThat(state(waiting()).usable()).isTrue();
     }
 
     @Test
-    void answersForAnUnverifiedAccountWhereVerificationIsNotRequired() {
-        // The demo profile, and the half that was missing.
-        assertThat(state(pending(), false).usable()).isTrue();
+    void answersForAnApprovedAccount() {
+        User approved = waiting();
+        approved.approve(UUID.randomUUID(), NOW);
+
+        assertThat(state(approved).usable()).isTrue();
     }
 
     @Test
-    void refusesADeactivatedAccountUnderEitherSetting() {
-        // The relaxation is exactly one status wide.
-        User deactivated = pending();
-        deactivated.markEmailVerified(NOW);
+    void refusesADeactivatedAccount() {
+        User deactivated = waiting();
+        deactivated.approve(UUID.randomUUID(), NOW);
         deactivated.deactivate();
 
-        assertThat(state(deactivated, true).usable()).isFalse();
-        assertThat(state(deactivated, false).usable()).isFalse();
+        assertThat(state(deactivated).usable()).isFalse();
     }
 
     @Test
-    void answersForAVerifiedAccountUnderEitherSetting() {
-        User verified = pending();
-        verified.markEmailVerified(NOW);
+    void refusesAnAccountThatNoLongerExists() {
+        when(users.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.empty());
 
-        assertThat(state(verified, true).usable()).isTrue();
-        assertThat(state(verified, false).usable()).isTrue();
+        assertThat(new AccountStatusAdapter(users).findAccountState(UUID.randomUUID()))
+                .isEmpty();
     }
 
-    private static User pending() {
+    private static User waiting() {
         return User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
     }
 
-    private AccountStatusProvider.AccountState state(User user, boolean requireEmailVerification) {
+    private AccountStatusProvider.AccountState state(User user) {
         when(users.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(user));
-
-        AccountStatusAdapter adapter = new AccountStatusAdapter(
-                users,
-                requireEmailVerification
-                        ? TestSecurityProperties.defaults()
-                        : TestSecurityProperties.withoutEmailVerification());
-
-        return adapter.findAccountState(UUID.randomUUID()).orElseThrow();
+        return new AccountStatusAdapter(users).findAccountState(UUID.randomUUID()).orElseThrow();
     }
 }

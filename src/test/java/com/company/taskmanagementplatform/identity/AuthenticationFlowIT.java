@@ -83,15 +83,19 @@ class AuthenticationFlowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void anUnverifiedAccountCannotSignIn() throws Exception {
-        String email = uniqueEmail("unverified");
+    void anAccountWaitingForApprovalCanSignIn() throws Exception {
+        // Onboarding by approval changed this. Somebody who has just registered is
+        // told that a person has to let them in, rather than given an answer
+        // indistinguishable from a wrong password. It grants them nothing: they
+        // belong to no workspace, so there is no work to reach.
+        String email = uniqueEmail("waiting");
         fixtures.pendingUser(email);
 
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(login(email, IdentityFixtures.PASSWORD)))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value(ErrorCode.EMAIL_NOT_VERIFIED.name()));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty());
     }
 
     @Test

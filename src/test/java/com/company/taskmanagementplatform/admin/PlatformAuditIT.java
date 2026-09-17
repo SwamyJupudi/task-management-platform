@@ -78,7 +78,7 @@ class PlatformAuditIT extends AdminApiTestBase {
         eventually(() -> {
             assertThat(one(subject.id(), "user.deactivated").get("workspace_id")).isNull();
             // The status is carried because reactivation lands on
-            // PENDING_VERIFICATION for an account that never confirmed its address.
+            // PENDING_APPROVAL for an account no administrator has approved.
             assertThat(String.valueOf(one(subject.id(), "user.activated").get("metadata")))
                     .contains("ACTIVE");
         });

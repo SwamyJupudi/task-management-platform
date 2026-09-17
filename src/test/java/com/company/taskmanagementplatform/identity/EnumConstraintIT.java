@@ -46,13 +46,6 @@ class EnumConstraintIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void invitationStatusMatchesItsConstraint() {
-        assertEveryConstantIsAccepted(
-                "workspace_invitations_status_check",
-                com.company.taskmanagementplatform.workspaces.InvitationStatus.class);
-    }
-
-    @Test
     void revocationReasonMatchesItsConstraint() {
         // The one most likely to drift: a new reason is a natural thing to add while
         // writing a feature, and the migration is easy to forget.

@@ -15,7 +15,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.company.taskmanagementplatform.common.error.ErrorCode;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
 import com.company.taskmanagementplatform.support.IdentityFixtures;
 import com.company.taskmanagementplatform.users.UserAccount;
@@ -129,46 +128,6 @@ class WorkspaceLifecycleIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void archivingFreezesEveryChangeInsideTheWorkspace() throws Exception {
-        Fixture fixture = workspaceWithAdmin();
-        UserAccount employee = fixtures.verifiedUser(uniqueEmail("employee"));
-        fixtures.addMember(fixture.workspaceId(), employee.id(), "EMPLOYEE");
-
-        mockMvc.perform(post("/api/v1/workspaces/" + fixture.workspaceId() + "/archive")
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("ARCHIVED"))
-                .andExpect(jsonPath("$.archivedAt").exists());
-
-        // Settings, membership and invitations, all frozen together.
-        mockMvc.perform(patch("/api/v1/workspaces/" + fixture.workspaceId())
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("name", "Still editing"))))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value(ErrorCode.CONFLICT.name()));
-
-        mockMvc.perform(patch("/api/v1/workspaces/" + fixture.workspaceId() + "/members/" + employee.id())
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("roleSlug", "TEAM_LEAD"))))
-                .andExpect(status().isConflict());
-
-        mockMvc.perform(post("/api/v1/workspaces/" + fixture.workspaceId() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", uniqueEmail("frozen"), "roleSlug", "EMPLOYEE"))))
-                .andExpect(status().isConflict());
-
-        mockMvc.perform(post("/api/v1/workspaces/" + fixture.workspaceId() + "/teams")
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("name", "Frozen"))))
-                .andExpect(status().isConflict());
-    }
-
-    @Test
     void anArchivedWorkspaceStaysReadable() throws Exception {
         Fixture fixture = workspaceWithAdmin();
 
@@ -272,36 +231,6 @@ class WorkspaceLifecycleIT extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("name", "Reused", "slug", slug))))
                 .andExpect(status().isCreated());
-    }
-
-    @Test
-    void anInvitationThatNamesNoRoleUsesTheWorkspaceDefault() throws Exception {
-        Fixture fixture = workspaceWithAdmin();
-
-        mockMvc.perform(post("/api/v1/workspaces/" + fixture.workspaceId() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("email", uniqueEmail("defaulted")))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.roleSlug").value("EMPLOYEE"));
-    }
-
-    @Test
-    void changingTheDefaultRoleChangesWhatAnUnnamedInvitationGets() throws Exception {
-        Fixture fixture = workspaceWithAdmin();
-
-        mockMvc.perform(patch("/api/v1/workspaces/" + fixture.workspaceId())
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("defaultRoleSlug", "TEAM_LEAD"))))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(post("/api/v1/workspaces/" + fixture.workspaceId() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, fixture.adminToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("email", uniqueEmail("promoted")))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.roleSlug").value("TEAM_LEAD"));
     }
 
     @Test

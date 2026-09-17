@@ -1,9 +1,9 @@
 import { api, type Page } from '@/lib/api'
 
-import type { Invitation, InviteInput, WorkspaceMember, WorkspaceRole } from './types'
+import type { PendingUser, WorkspaceMember, WorkspaceRole } from './types'
 
 /**
- * The workspace's roster, its roles and its invitations.
+ * The workspace's roster and its roles.
  *
  * This feature owns the member directory, which is why the lookups other
  * features need — who is in this workspace, and which roles exist — are
@@ -19,6 +19,32 @@ import type { Invitation, InviteInput, WorkspaceMember, WorkspaceRole } from './
 const base = (workspaceId: string) => `/workspaces/${workspaceId}`
 
 /** `GET /workspaces/{id}/members`. Needs `member:read`. */
+/**
+ * `GET /workspaces/{id}/pending-users`. Needs `member:invite` in this workspace.
+ *
+ * Not scoped to the workspace, and it cannot be: a registration belongs to no
+ * workspace until somebody approves it into one. What the workspace scopes is
+ * the right to see the queue at all.
+ */
+export function listPendingUsers(
+  workspaceId: string,
+  page: number,
+  size: number,
+): Promise<Page<PendingUser>> {
+  return api.get<Page<PendingUser>>(`${base(workspaceId)}/pending-users`, {
+    params: { page, size },
+  })
+}
+
+/** `POST /workspaces/{id}/pending-users/{userId}/approve`. Needs `member:invite`. */
+export function approvePendingUser(
+  workspaceId: string,
+  userId: string,
+  body: { roleSlug: string; projectId?: string | undefined },
+): Promise<PendingUser> {
+  return api.post<PendingUser>(`${base(workspaceId)}/pending-users/${userId}/approve`, body)
+}
+
 export function listMembers(
   workspaceId: string,
   page: number,
@@ -52,28 +78,3 @@ export function listRoles(workspaceId: string): Promise<WorkspaceRole[]> {
   return api.get<WorkspaceRole[]>(`${base(workspaceId)}/roles`)
 }
 
-/** `GET /workspaces/{id}/invitations`. Needs `member:read`. */
-export function listInvitations(
-  workspaceId: string,
-  page: number,
-  size: number,
-): Promise<Page<Invitation>> {
-  return api.get<Page<Invitation>>(`${base(workspaceId)}/invitations`, {
-    params: { page, size },
-  })
-}
-
-/**
- * `POST /workspaces/{id}/invitations`. Needs `member:invite`.
- *
- * Any outstanding invitation to the same address is superseded, which is the
- * only "send it again" the platform has — there is no resend endpoint.
- */
-export function invite(workspaceId: string, body: InviteInput): Promise<Invitation> {
-  return api.post<Invitation>(`${base(workspaceId)}/invitations`, body)
-}
-
-/** `DELETE /workspaces/{id}/invitations/{id}`. Needs `member:invite`. */
-export function revokeInvitation(workspaceId: string, invitationId: string): Promise<void> {
-  return api.delete<void>(`${base(workspaceId)}/invitations/${invitationId}`)
-}

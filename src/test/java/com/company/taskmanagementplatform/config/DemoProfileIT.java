@@ -17,7 +17,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import com.company.taskmanagementplatform.attachments.FileStore;
-import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -63,9 +62,6 @@ class DemoProfileIT extends AbstractIntegrationTest {
 
     @Autowired
     private FileStore fileStore;
-
-    @Autowired
-    private SecurityProperties security;
 
     @Autowired
     private JsonMapper json;
@@ -116,7 +112,7 @@ class DemoProfileIT extends AbstractIntegrationTest {
         // worse off than before: /auth/login answered 200, and every request made
         // with the token it issued was refused ACCOUNT_INACTIVE by the
         // authentication filter -- because registration left the account
-        // PENDING_VERIFICATION and isUsable() reads the status, not the timestamp.
+        // PENDING_APPROVAL and isUsable() reads the status.
         String email = uniqueEmail("demo-unverified");
         String password = "correct-horse-battery";
 
@@ -147,17 +143,6 @@ class DemoProfileIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.email").value(email))
                 .andExpect(jsonPath("$.user.emailVerified").value(false));
-    }
-
-    @Test
-    void thisProfileDoesNotRequireEmailVerificationToSignIn() {
-        // The relaxation this profile exists to make, asserted against the loaded
-        // properties rather than a literal: a demo whose mail may be going nowhere
-        // must not register an account and then refuse the sign-in that follows.
-        // Every other profile leaves it on, which application.properties defaults.
-        assertThat(security.requireEmailVerification())
-                .as("the demo profile relaxes email verification; no other profile does")
-                .isFalse();
     }
 
     @Test

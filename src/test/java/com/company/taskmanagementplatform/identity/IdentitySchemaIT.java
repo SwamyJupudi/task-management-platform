@@ -50,17 +50,6 @@ class IdentitySchemaIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void refusesAnActiveAccountWithNoConfirmedAddress() {
-        assertThatThrownBy(() -> jdbc.update(
-                        """
-                        INSERT INTO users (email, password_hash, first_name, last_name, status)
-                        VALUES (?, 'hash', 'Test', 'Person', 'ACTIVE')
-                        """,
-                        uniqueEmail("unverified-active")))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
     void refusesAPlatformRoleThatNamesAWorkspace() {
         UUID workspaceId = insertWorkspace();
 
@@ -148,36 +137,6 @@ class IdentitySchemaIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void refusesASecondOutstandingInvitationToTheSameAddress() {
-        UUID workspaceId = insertWorkspace();
-        UUID roleId = roleIdIn(workspaceId, "EMPLOYEE");
-        UUID inviter = insertUser(uniqueEmail("inviter"));
-        String invitee = uniqueEmail("invitee");
-
-        insertInvitation(workspaceId, invitee, roleId, inviter, UUID.randomUUID().toString());
-
-        assertThatThrownBy(
-                        () -> insertInvitation(workspaceId, invitee, roleId, inviter, UUID.randomUUID().toString()))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void allowsAFreshInvitationOnceTheEarlierOneIsWithdrawn() {
-        // The index is partial on PENDING, so history survives and re-inviting works.
-        UUID workspaceId = insertWorkspace();
-        UUID roleId = roleIdIn(workspaceId, "EMPLOYEE");
-        UUID inviter = insertUser(uniqueEmail("inviter"));
-        String invitee = uniqueEmail("invitee");
-
-        String firstHash = UUID.randomUUID().toString();
-        insertInvitation(workspaceId, invitee, roleId, inviter, firstHash);
-        jdbc.update("UPDATE workspace_invitations SET status = 'REVOKED' WHERE token_hash = ?", firstHash);
-
-        assertThatCode(() -> insertInvitation(workspaceId, invitee, roleId, inviter, UUID.randomUUID().toString()))
-                .doesNotThrowAnyException();
-    }
-
-    @Test
     void refusesARevokedTokenWithNoReason() {
         UUID userId = insertUser(uniqueEmail("revocation"));
 
@@ -260,17 +219,4 @@ class IdentitySchemaIT extends AbstractIntegrationTest {
                 "SELECT id FROM roles WHERE workspace_id = ? AND slug = ?", UUID.class, workspaceId, slug);
     }
 
-    private void insertInvitation(UUID workspaceId, String email, UUID roleId, UUID inviter, String tokenHash) {
-        jdbc.update(
-                """
-                INSERT INTO workspace_invitations
-                    (workspace_id, email, role_id, token_hash, expires_at, invited_by_user_id)
-                VALUES (?, ?, ?, ?, now() + interval '7 days', ?)
-                """,
-                workspaceId,
-                email,
-                roleId,
-                tokenHash,
-                inviter);
-    }
 }

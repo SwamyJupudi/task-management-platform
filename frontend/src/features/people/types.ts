@@ -17,23 +17,6 @@ export interface WorkspaceMember {
   joinedAt: string
 }
 
-/**
- * One outstanding or settled invitation.
- *
- * There is no resend endpoint. Inviting the same address again supersedes
- * whatever is outstanding, which is what "send another" means here.
- */
-export interface Invitation {
-  id: string
-  workspaceId: string
-  email: string
-  roleSlug: string
-  /** `PENDING`, and the settled states the backend records. */
-  status: string
-  expiresAt: string
-  createdAt: string
-}
-
 /** A role of this workspace, and what it grants. */
 export interface WorkspaceRole {
   id: string
@@ -45,9 +28,18 @@ export interface WorkspaceRole {
   permissions: string[]
 }
 
-/** The body of `POST /workspaces/{id}/invitations`. */
-export interface InviteInput {
+
+/**
+ * A registration waiting to be admitted.
+ *
+ * The platform's `UserResponse`, not a workspace member: somebody in this list
+ * belongs to no workspace yet, which is exactly what approving them changes.
+ */
+export interface PendingUser {
+  id: string
   email: string
-  /** Omitted means the workspace's default role. */
-  roleSlug?: string | undefined
+  firstName: string
+  lastName: string
+  status: string
+  createdAt: string
 }

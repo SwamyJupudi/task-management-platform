@@ -22,7 +22,6 @@ public record MailMessage(String recipient, MailTemplate template, Map<String, S
     public enum MailTemplate {
         EMAIL_VERIFICATION,
         PASSWORD_RESET,
-        PASSWORD_CHANGED,
-        WORKSPACE_INVITATION
+        PASSWORD_CHANGED
     }
 }

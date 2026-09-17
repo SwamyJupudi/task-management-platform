@@ -71,7 +71,6 @@ public class AuthenticationService {
                 log.warn("Sign-in refused, account locked: userId={}", check.userId());
                 throw ForbiddenException.accountLocked();
             }
-            case EMAIL_NOT_VERIFIED -> throw ForbiddenException.emailNotVerified();
             case INACTIVE -> {
                 log.warn("Sign-in refused, account inactive: userId={}", check.userId());
                 throw ForbiddenException.accountInactive();

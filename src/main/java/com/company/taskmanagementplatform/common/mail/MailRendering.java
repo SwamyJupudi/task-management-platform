@@ -17,8 +17,7 @@ final class MailRendering {
 
     private static final Map<MailMessage.MailTemplate, String> LINK_PATHS = Map.of(
             MailMessage.MailTemplate.EMAIL_VERIFICATION, "/verify-email",
-            MailMessage.MailTemplate.PASSWORD_RESET, "/reset-password",
-            MailMessage.MailTemplate.WORKSPACE_INVITATION, "/invitations/accept");
+            MailMessage.MailTemplate.PASSWORD_RESET, "/reset-password");
 
     private MailRendering() {}
 
@@ -42,10 +41,6 @@ final class MailRendering {
             case EMAIL_VERIFICATION -> "Confirm your email address";
             case PASSWORD_RESET -> "Reset your password";
             case PASSWORD_CHANGED -> "Your password was changed";
-            case WORKSPACE_INVITATION -> {
-                String workspace = message.variables().get("workspaceName");
-                yield workspace == null ? "You have been invited to a workspace" : "You have been invited to " + workspace;
-            }
         };
     }
 
@@ -83,18 +78,6 @@ final class MailRendering {
                     If this was not you, reset your password immediately and contact your \
                     administrator.
                     """;
-            case WORKSPACE_INVITATION -> """
-                    You have been invited to join %s.
-
-                    Accept the invitation here:
-
-                    %s
-
-                    The link can be used once and expires. If you were not expecting it, \
-                    you can ignore this message.
-                    """
-                    .formatted(
-                            message.variables().getOrDefault("workspaceName", "a workspace"), link);
         };
     }
 

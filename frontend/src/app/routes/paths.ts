@@ -58,7 +58,6 @@ export const paths = {
     forgotPassword: '/forgot-password',
     resetPassword: '/reset-password',
     verifyEmail: '/verify-email',
-    acceptInvitation: '/invitations/accept',
   },
 
   /** The pattern the router declares. Not a link target: it has no slug in it. */
@@ -112,6 +111,7 @@ export const paths = {
   admin: {
     root: '/admin',
     users: '/admin/users',
+    pending: '/admin/pending',
     workspaces: '/admin/workspaces',
     roles: '/admin/roles',
     projects: '/admin/projects',

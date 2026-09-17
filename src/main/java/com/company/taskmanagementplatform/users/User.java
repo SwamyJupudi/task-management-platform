@@ -91,6 +91,12 @@ class User {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "approved_at")
+    private Instant approvedAt;
+
+    @Column(name = "approved_by_user_id")
+    private UUID approvedByUserId;
+
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
@@ -104,7 +110,7 @@ class User {
         user.passwordHash = passwordHash;
         user.firstName = firstName;
         user.lastName = lastName;
-        user.status = UserStatus.PENDING_VERIFICATION;
+        user.status = UserStatus.PENDING_APPROVAL;
         user.passwordChangedAt = now;
         user.failedLoginAttempts = 0;
         return user;
@@ -129,13 +135,43 @@ class User {
 
     // --- state changes ----------------------------------------------------
 
+    /**
+     * Records that the address was confirmed.
+     *
+     * <p>No longer touches the status, and that is the whole of what onboarding by approval changed
+     * here. Confirming an address used to be what activated an account; an administrator's approval
+     * is what does that now, and this column is a record of what happened rather than a gate. The
+     * {@code users_verified_when_active_check} constraint that tied the two together is dropped in
+     * {@code V14__approval_onboarding.sql}.
+     */
     void markEmailVerified(Instant now) {
         if (emailVerifiedAt == null) {
             emailVerifiedAt = now;
         }
-        if (status == UserStatus.PENDING_VERIFICATION) {
-            status = UserStatus.ACTIVE;
+    }
+
+    /**
+     * Lets somebody in, and records who did.
+     *
+     * <p>Guarded on {@code PENDING_APPROVAL}, which is what makes approving twice harmless and what
+     * stops an approval reviving a {@code DEACTIVATED} account: switching somebody off stays a
+     * decision only {@link #activate()} reverses.
+     *
+     * <p>The guard holds under a race because the caller reads this row with a write lock first, so
+     * a second administrator approving the same registration waits, then finds it no longer pending.
+     * See {@code UserRepository.findPendingForUpdate}.
+     *
+     * @return true when this call is what changed the status, so the caller knows whether to grant
+     *     the membership
+     */
+    boolean approve(UUID approverUserId, Instant now) {
+        if (status != UserStatus.PENDING_APPROVAL) {
+            return false;
         }
+        status = UserStatus.ACTIVE;
+        approvedAt = now;
+        approvedByUserId = approverUserId;
+        return true;
     }
 
     void changePassword(String newPasswordHash, Instant now) {
@@ -207,11 +243,16 @@ class User {
         status = UserStatus.DEACTIVATED;
     }
 
+    /**
+     * Switches a deactivated account back on.
+     *
+     * <p>An account that was never approved returns to the queue rather than straight to active, so
+     * reactivating somebody cannot be a way of skipping the approval an administrator never gave.
+     * Previously this asked whether the address had been confirmed, which is no longer the question
+     * that decides whether somebody may work.
+     */
     void activate() {
-        // An account that never verified its address goes back to waiting for
-        // that, not straight to active. The check constraint on the table
-        // enforces the same rule.
-        status = emailVerifiedAt == null ? UserStatus.PENDING_VERIFICATION : UserStatus.ACTIVE;
+        status = approvedAt == null ? UserStatus.PENDING_APPROVAL : UserStatus.ACTIVE;
     }
 
     void softDelete(Instant now) {
@@ -242,26 +283,24 @@ class User {
     }
 
     /** Whether a token issued for this account should still be honoured. */
+    /**
+     * Whether a token issued for this account is still honoured.
+     *
+     * <p>{@code PENDING_APPROVAL} counts, which is what lets somebody who has just registered sign
+     * in and be told they are waiting. It grants them nothing: every workspace, project and task is
+     * reached through a membership, and an unapproved account has none. {@code DEACTIVATED} and a
+     * removed account are refused, as before.
+     */
     boolean isUsable() {
-        return deletedAt == null && status == UserStatus.ACTIVE;
+        return deletedAt == null && (status == UserStatus.ACTIVE || status == UserStatus.PENDING_APPROVAL);
     }
 
-    /**
-     * The same question where an unconfirmed address is allowed to sign in -- the demo profile alone.
-     *
-     * <p>Widening what counts as usable, rather than changing what is stored, and that is the whole
-     * design. The database will not hold an unconfirmed account in {@code ACTIVE}: {@code
-     * users_verified_when_active_check} in {@code V2__identity.sql} says {@code status <> 'ACTIVE' OR
-     * email_verified_at IS NOT NULL}. That invariant belongs to production and stays, so promoting
-     * the status was never expressible -- the insert is rejected outright. A registration under this
-     * profile therefore writes exactly the row an ordinary one writes, and only the reading of it
-     * differs.
-     *
-     * <p>{@code DEACTIVATED} and a removed account are still excluded, so an administrator switching
-     * somebody off is as final here as anywhere, and so is a deletion.
-     */
-    boolean isUsableWithoutVerification() {
-        return deletedAt == null && (status == UserStatus.ACTIVE || status == UserStatus.PENDING_VERIFICATION);
+    Instant getApprovedAt() {
+        return approvedAt;
+    }
+
+    UUID getApprovedByUserId() {
+        return approvedByUserId;
     }
 
     UUID getId() {

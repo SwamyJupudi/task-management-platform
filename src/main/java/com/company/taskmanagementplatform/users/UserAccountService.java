@@ -44,7 +44,6 @@ public class UserAccountService {
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicy passwordPolicy;
     private final SecurityProperties.Lockout lockout;
-    private final boolean requireEmailVerification;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
@@ -70,7 +69,6 @@ public class UserAccountService {
         this.passwordEncoder = passwordEncoder;
         this.passwordPolicy = passwordPolicy;
         this.lockout = securityProperties.lockout();
-        this.requireEmailVerification = securityProperties.requireEmailVerification();
         this.events = events;
         this.clock = clock;
         this.timingEqualisationHash = passwordEncoder.encode(UUID.randomUUID().toString());
@@ -86,9 +84,8 @@ public class UserAccountService {
     /**
      * Creates an account.
      *
-     * <p>Registration is the same under every profile, including the demo one. Where an unconfirmed
-     * address is permitted to sign in, the relaxation is applied when the account is <em>read</em> --
-     * see {@code AccountStatusAdapter} -- rather than by writing a different row here.
+     * <p>An ordinary registration starts {@code PENDING_APPROVAL}: it can sign in and reach its own
+     * account, and nothing else, until an administrator approves it and names a workspace.
      *
      * @param alreadyVerified true only when the address was proved some other way. Accepting an
      *     invitation is the one case: the token was delivered to that address and nothing else, so
@@ -111,6 +108,35 @@ public class UserAccountService {
             user.markEmailVerified(clock.instant());
         }
         return toAccount(users.save(user));
+    }
+
+    /**
+     * Lets somebody in.
+     *
+     * <p>Only the status and the record of who approved it. Granting the workspace membership is
+     * {@code MembershipService}'s job and is done by the caller in the same transaction, so this
+     * module still knows nothing about workspaces and the membership is created by the same service
+     * every other path uses.
+     *
+     * <p>Approving an account that is not waiting is not an error. An administrator who presses the
+     * button twice, or two administrators working the same queue, should get the outcome they asked
+     * for rather than a failure; the boolean says whether this call is the one that changed
+     * anything, so the caller can skip the membership it would otherwise add twice.
+     *
+     * @return true when this call moved the account out of the queue
+     */
+    @Transactional
+    public boolean approve(UUID userId, UUID approverUserId) {
+        // Read under a write lock, so two administrators approving the same waiting
+        // account at the same moment cannot both proceed: the second waits, then
+        // finds an account that is no longer pending.
+        User user = users.findForApproval(userId)
+                .orElseThrow(() -> ResourceNotFoundException.of("User", userId));
+        boolean approved = user.approve(approverUserId, clock.instant());
+        if (approved) {
+            events.publishEvent(new UserAdminEvents.Approved(approverUserId, userId));
+        }
+        return approved;
     }
 
     // --- authentication ---------------------------------------------------
@@ -153,19 +179,11 @@ public class UserAccountService {
         if (user.getStatus() == UserStatus.DEACTIVATED) {
             return new CredentialCheck(CredentialCheck.Outcome.INACTIVE, user.getId());
         }
-        // Switched off by the demo profile alone, where mail may be going nowhere
-        // and refusing the sign-in that follows a registration would strand
-        // somebody on a confirmation link sitting in a log they are not reading.
-        // Nothing about verification is disabled by it: the token is still issued,
-        // the message is still sent, and confirming still works. The only question
-        // this answers is whether an unconfirmed address may sign in.
-        //
-        // Checked here rather than in AuthenticationService because the rest of a
-        // successful sign-in -- the last-login stamp and the cleared failure count
-        // below -- has to happen exactly as it does for a confirmed account.
-        if (requireEmailVerification && user.getEmailVerifiedAt() == null) {
-            return new CredentialCheck(CredentialCheck.Outcome.EMAIL_NOT_VERIFIED, user.getId());
-        }
+        // PENDING_APPROVAL is deliberately not refused here. Somebody who has just
+        // registered signs in and is shown that an administrator has to let them in,
+        // which is a better answer than one indistinguishable from a wrong password.
+        // It grants them nothing: every workspace, project and task is reached
+        // through a membership they do not have until they are approved.
 
         user.recordSuccessfulLogin(now);
         return new CredentialCheck(CredentialCheck.Outcome.SUCCESS, user.getId());

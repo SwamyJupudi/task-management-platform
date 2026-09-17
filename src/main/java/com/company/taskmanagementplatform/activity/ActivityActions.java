@@ -55,6 +55,7 @@ final class ActivityActions {
     static final String USER_ACTIVATED = "user.activated";
     static final String USER_DEACTIVATED = "user.deactivated";
     static final String USER_DELETED = "user.deleted";
+    static final String USER_APPROVED = "user.approved";
     static final String USER_UNLOCKED = "user.unlocked";
     static final String USER_PASSWORD_RESET_REQUESTED = "user.password_reset_requested";
     static final String USER_VERIFICATION_RESENT = "user.verification_resent";

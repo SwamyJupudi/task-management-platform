@@ -3,7 +3,6 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/app-layout'
 import { AuthLayout } from '@/components/layout/auth-layout'
 import {
-  AcceptInvitationPage,
   ForgotPasswordPage,
   LoginPage,
   RegisterPage,
@@ -13,6 +12,7 @@ import {
 import {
   AccountsPage,
   AdminOverviewPage,
+  PendingUsersPage,
   AdminWorkspacesPage,
   PlatformActivityPage,
   PlatformProjectsPage,
@@ -85,10 +85,9 @@ export function AppRouter() {
         </Route>
       </Route>
 
-      {/* Reachable with or without a session: both arrive from an emailed link. */}
+      {/* Reachable with or without a session: it arrives from an emailed link. */}
       <Route element={<AuthLayout />}>
         <Route path={paths.auth.verifyEmail} element={<VerifyEmailPage />} />
-        <Route path={paths.auth.acceptInvitation} element={<AcceptInvitationPage />} />
       </Route>
 
       {/* Private. */}
@@ -172,6 +171,7 @@ export function AppRouter() {
           <Route element={<RequirePermission codes={['admin:read_system']} platform />}>
             <Route path={paths.admin.root} element={<AdminOverviewPage />} />
             <Route path={paths.admin.users} element={<AccountsPage />} />
+            <Route path={paths.admin.pending} element={<PendingUsersPage />} />
             <Route path={paths.admin.workspaces} element={<AdminWorkspacesPage />} />
             <Route path={paths.admin.roles} element={<RolesPage />} />
             <Route path={paths.admin.projects} element={<PlatformProjectsPage />} />

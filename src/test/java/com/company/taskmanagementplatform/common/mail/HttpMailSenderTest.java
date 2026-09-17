@@ -83,31 +83,21 @@ class HttpMailSenderTest {
     }
 
     @Test
-    void anInvitationNamesTheWorkspace() {
+    void aRecipientIsEscapedRatherThanConcatenated() {
+        // The reason the body is built with Jackson rather than by hand. A crafted
+        // value that would close the JSON string and open a second recipient has to
+        // survive as one value.
         send(new MailMessage(
-                "ada@example.com",
-                MailMessage.MailTemplate.WORKSPACE_INVITATION,
-                Map.of("token", "tok-789", "workspaceName", "Platform Team")));
+                "ada\", \"to\": [\"attacker@example.com\"], \"x\": \"@example.com",
+                MailMessage.MailTemplate.EMAIL_VERIFICATION,
+                Map.of("token", "t")));
 
-        JsonNode body = json.readTree(lastBody.get());
-        assertThat(body.get("subject").asString()).isEqualTo("You have been invited to Platform Team");
-        assertThat(body.get("text").asString()).contains(BASE + "/invitations/accept?token=tok-789");
-    }
-
-    @Test
-    void aWorkspaceNameIsEscapedRatherThanConcatenated() {
-        // The reason the body is built with Jackson. A workspace name is
-        // user-supplied and reaches the subject, so a quote in one would end the
-        // JSON string if this were assembled by hand.
-        send(new MailMessage(
-                "ada@example.com",
-                MailMessage.MailTemplate.WORKSPACE_INVITATION,
-                Map.of("token", "t", "workspaceName", "Ops \", \"to\": [\"attacker@example.com\"], \"x\": \"")));
-
+        // One recipient, holding the crafted value whole. Hand-written JSON would
+        // have closed the string and opened a second address here.
         JsonNode body = json.readTree(lastBody.get());
         assertThat(body.get("to")).hasSize(1);
-        assertThat(body.get("to").get(0).asString()).isEqualTo("ada@example.com");
-        assertThat(body.get("subject").asString()).contains("attacker@example.com");
+        assertThat(body.get("to").get(0).asString())
+                .isEqualTo("ada\", \"to\": [\"attacker@example.com\"], \"x\": \"@example.com");
     }
 
     @Test

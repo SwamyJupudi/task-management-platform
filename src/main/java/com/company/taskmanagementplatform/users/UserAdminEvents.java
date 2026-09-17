@@ -43,6 +43,9 @@ public final class UserAdminEvents {
     public record Deleted(UUID actorUserId, UUID userId, String email) {}
 
     /** A lockout was cleared by hand. Only published when there was one to clear. */
+    /** An administrator let a waiting account in. The workspace it was given is audited beside it. */
+    public record Approved(UUID actorUserId, UUID userId) {}
+
     public record Unlocked(UUID actorUserId, UUID userId) {}
 
     /** An administrator started a password recovery. The token itself is never in an event. */

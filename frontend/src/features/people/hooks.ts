@@ -6,7 +6,7 @@ import { type Page } from '@/lib/api'
 import { queryKeys } from '@/lib/query-client'
 
 import * as peopleApi from './api'
-import type { Invitation, InviteInput, WorkspaceMember, WorkspaceRole } from './types'
+import type { PendingUser, WorkspaceMember, WorkspaceRole } from './types'
 
 /**
  * The people feature's server state.
@@ -113,21 +113,6 @@ export function useWorkspaceRoles(): UseQueryResult<WorkspaceRole[]> {
   })
 }
 
-/** Outstanding and settled invitations, paged. Reading them needs `member:read`. */
-export function useInvitations(page: number): UseQueryResult<Page<Invitation>> {
-  const workspace = useActiveWorkspace()
-  const workspaceId = workspace?.workspaceId ?? null
-  const { canReadMembers } = usePeoplePermissions()
-
-  return useQuery({
-    queryKey: [...peopleRoot(workspaceId ?? 'none'), 'invitations', page],
-    queryFn: () => peopleApi.listInvitations(workspaceId as string, page, PAGE_SIZE),
-    enabled: workspaceId !== null && canReadMembers,
-    staleTime: STALE_MS,
-    placeholderData: (previous) => previous,
-  })
-}
-
 // --- mutations --------------------------------------------------------------
 
 /**
@@ -137,6 +122,50 @@ export function useInvitations(page: number): UseQueryResult<Page<Invitation>> {
  * and settles their invitation, and a role change moves a row in both the
  * directory and every picker built from it.
  */
+/**
+ * Registrations waiting to be admitted to this workspace.
+ *
+ * Only fetched for somebody who could act on it: `member:invite` is what the
+ * endpoint requires, a workspace ADMIN holds it, and TEAM_LEAD and EMPLOYEE do
+ * not. Asking anyway would produce a 403 the screen can do nothing with.
+ */
+export function usePendingUsers(page: number): UseQueryResult<Page<PendingUser>> {
+  const workspace = useActiveWorkspace()
+  const workspaceId = workspace?.workspaceId ?? null
+  const { canInvite } = usePeoplePermissions()
+
+  return useQuery({
+    queryKey: [...peopleRoot(workspaceId ?? 'none'), 'pending-users', page],
+    queryFn: () => peopleApi.listPendingUsers(workspaceId as string, page, PAGE_SIZE),
+    enabled: workspaceId !== null && canInvite,
+    placeholderData: (previous) => previous,
+  })
+}
+
+/** Approving somebody into this workspace, and refreshing both lists it changes. */
+export function useApprovePendingUser() {
+  const queryClient = useQueryClient()
+  const workspace = useActiveWorkspace()
+  const workspaceId = workspace?.workspaceId ?? null
+
+  return useMutation({
+    mutationFn: ({
+      userId,
+      roleSlug,
+      projectId,
+    }: {
+      userId: string
+      roleSlug: string
+      projectId?: string | undefined
+    }) => peopleApi.approvePendingUser(workspaceId as string, userId, { roleSlug, projectId }),
+    onSuccess: () => {
+      // They left the queue and joined the roster, and may have joined a project.
+      void queryClient.invalidateQueries({ queryKey: peopleRoot(workspaceId ?? 'none') })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+    },
+  })
+}
+
 export function usePeopleMutations() {
   const queryClient = useQueryClient()
   const workspace = useActiveWorkspace()
@@ -164,15 +193,5 @@ export function usePeopleMutations() {
     },
   })
 
-  const sendInvite = useMutation({
-    mutationFn: (body: InviteInput) => peopleApi.invite(workspaceId, body),
-    onSuccess: invalidate,
-  })
-
-  const revokeInvite = useMutation({
-    mutationFn: (invitationId: string) => peopleApi.revokeInvitation(workspaceId, invitationId),
-    onSuccess: invalidate,
-  })
-
-  return { changeRole, removeMember, sendInvite, revokeInvite }
+  return { changeRole, removeMember }
 }

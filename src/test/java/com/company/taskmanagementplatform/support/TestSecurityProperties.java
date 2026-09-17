@@ -28,15 +28,7 @@ public final class TestSecurityProperties {
                 new SecurityProperties.Cookie("refresh_token", "/api/v1/auth", true, Duration.ofDays(14)),
                 new SecurityProperties.Password(8, 72),
                 new SecurityProperties.Lockout(5, Duration.ofMinutes(15)),
-                new SecurityProperties.Tokens(Duration.ofHours(24), Duration.ofHours(1), Duration.ofDays(7)),
-                true);
-    }
-
-    /** The demo profile's setting: an unconfirmed address may sign in. */
-    public static SecurityProperties withoutEmailVerification() {
-        SecurityProperties base = defaults();
-        return new SecurityProperties(
-                base.jwt(), base.cookie(), base.password(), base.lockout(), base.tokens(), false);
+                new SecurityProperties.Tokens(Duration.ofHours(24), Duration.ofHours(1)));
     }
 
     public static SecurityProperties withLockout(int maxAttempts, Duration duration) {
@@ -46,8 +38,7 @@ public final class TestSecurityProperties {
                 base.cookie(),
                 base.password(),
                 new SecurityProperties.Lockout(maxAttempts, duration),
-                base.tokens(),
-                base.requireEmailVerification());
+                base.tokens());
     }
 
     public static SecurityProperties withRefreshTtl(Duration ttl) {
@@ -58,7 +49,6 @@ public final class TestSecurityProperties {
                         base.cookie().name(), base.cookie().path(), base.cookie().secure(), ttl),
                 base.password(),
                 base.lockout(),
-                base.tokens(),
-                base.requireEmailVerification());
+                base.tokens());
     }
 }

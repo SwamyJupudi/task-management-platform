@@ -23,8 +23,6 @@ public record CredentialCheck(Outcome outcome, UUID userId) {
         INVALID_CREDENTIALS,
         /** Correct password, but too many recent failures. */
         LOCKED,
-        /** Correct password, but the address has never been confirmed. */
-        EMAIL_NOT_VERIFIED,
         /** Correct password, but an administrator switched the account off. */
         INACTIVE
     }

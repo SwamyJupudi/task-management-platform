@@ -134,11 +134,6 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, basePath + "/auth/verify-email/resend").permitAll()
                         .requestMatchers(HttpMethod.POST, basePath + "/auth/password/forgot").permitAll()
                         .requestMatchers(HttpMethod.POST, basePath + "/auth/password/reset").permitAll()
-                        // An invitation reaches somebody who may have no account at
-                        // all. Acceptance still requires signing in when the invited
-                        // address already has one; the service enforces that.
-                        .requestMatchers(HttpMethod.GET, basePath + "/invitations").permitAll()
-                        .requestMatchers(HttpMethod.POST, basePath + "/invitations/accept").permitAll()
                         // Operational and documentation surfaces. Actuator exposes
                         // only health, and only without detail, in production.
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()

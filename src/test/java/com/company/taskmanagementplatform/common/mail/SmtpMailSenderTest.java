@@ -56,18 +56,6 @@ class SmtpMailSenderTest {
     }
 
     @Test
-    void anInvitationNamesTheWorkspaceAndCarriesAWorkingLink() {
-        send(new MailMessage(
-                "ada@example.com",
-                MailMessage.MailTemplate.WORKSPACE_INVITATION,
-                Map.of("token", "tok-789", "workspaceName", "Platform Team")));
-
-        SimpleMailMessage sent = captured();
-        assertThat(sent.getSubject()).isEqualTo("You have been invited to Platform Team");
-        assertThat(sent.getText()).contains("Platform Team").contains(BASE + "/invitations/accept?token=tok-789");
-    }
-
-    @Test
     void aPasswordChangeNoticeCarriesNoLinkAtAll() {
         // Nothing to click, so nothing to steal. It reports a change that has already
         // happened and tells the reader what to do if it was not them.

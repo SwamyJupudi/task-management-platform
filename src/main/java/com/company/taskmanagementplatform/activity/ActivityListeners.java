@@ -450,6 +450,21 @@ class ActivityListeners {
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    void onUserApproved(UserAdminEvents.Approved event) {
+        // Who let somebody into the platform is the first question asked when an
+        // account turns out to have reach it should not, so it is audited in its
+        // own right rather than left implicit in the membership that follows.
+        record(
+                null,
+                event.actorUserId(),
+                ActivityActions.USER_APPROVED,
+                ActivityEntityType.USER,
+                event.userId(),
+                null,
+                Map.of());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     void onUserUnlocked(UserAdminEvents.Unlocked event) {
         record(
                 null,

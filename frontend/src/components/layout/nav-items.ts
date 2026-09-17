@@ -1,4 +1,5 @@
 import {
+  UserCheckIcon,
   BellIcon,
   BuildingIcon,
   ChartNoAxesColumnIcon,
@@ -127,6 +128,12 @@ const platformItems: readonly NavItem[] = [
     label: 'Accounts',
     to: () => paths.admin.users,
     icon: UserCogIcon,
+    permissions: ['user:read'],
+  },
+  {
+    label: 'Pending users',
+    to: () => paths.admin.pending,
+    icon: UserCheckIcon,
     permissions: ['user:read'],
   },
   {

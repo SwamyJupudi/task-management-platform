@@ -50,7 +50,6 @@ class FlywayMigrationIT extends AbstractIntegrationTest {
             "roles",
             "user_tokens",
             "users",
-            "workspace_invitations",
             "workspace_members",
             "workspaces");
 

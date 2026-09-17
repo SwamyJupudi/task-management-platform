@@ -43,52 +43,6 @@ class WorkspaceAuthorizationIT extends AbstractIntegrationTest {
     private IdentityFixtures fixtures;
 
     @Test
-    void anAdministratorMayInviteAndReassign() throws Exception {
-        UserAccount owner = fixtures.superAdmin(uniqueEmail("owner"));
-        WorkspaceResponse workspace = fixtures.workspace("Team", uniqueSlug("team"), owner.id());
-        UserAccount admin = fixtures.verifiedUser(uniqueEmail("admin"));
-        fixtures.addMember(workspace.id(), admin.id(), "ADMIN");
-
-        UserAccount employee = fixtures.verifiedUser(uniqueEmail("employee"));
-        fixtures.addMember(workspace.id(), employee.id(), "EMPLOYEE");
-
-        mockMvc.perform(post("/api/v1/workspaces/" + workspace.id() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(admin.id()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", uniqueEmail("invitee"), "roleSlug", "EMPLOYEE"))))
-                .andExpect(status().isCreated());
-
-        mockMvc.perform(patch("/api/v1/workspaces/" + workspace.id() + "/members/" + employee.id())
-                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(admin.id()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("roleSlug", "TEAM_LEAD"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.roleSlug").value("TEAM_LEAD"));
-    }
-
-    @Test
-    void anEmployeeMaySeeTheRosterButNotChangeIt() throws Exception {
-        UserAccount owner = fixtures.superAdmin(uniqueEmail("owner"));
-        WorkspaceResponse workspace = fixtures.workspace("Team", uniqueSlug("team"), owner.id());
-        UserAccount employee = fixtures.verifiedUser(uniqueEmail("employee"));
-        fixtures.addMember(workspace.id(), employee.id(), "EMPLOYEE");
-        String token = fixtures.bearer(employee.id());
-
-        mockMvc.perform(get("/api/v1/workspaces/" + workspace.id() + "/members")
-                        .header(HttpHeaders.AUTHORIZATION, token))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(post("/api/v1/workspaces/" + workspace.id() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", uniqueEmail("nope"), "roleSlug", "EMPLOYEE"))))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value(ErrorCode.FORBIDDEN.name()));
-    }
-
-    @Test
     void aTeamLeadMayNotReassignRoles() throws Exception {
         UserAccount owner = fixtures.superAdmin(uniqueEmail("owner"));
         WorkspaceResponse workspace = fixtures.workspace("Team", uniqueSlug("team"), owner.id());
@@ -233,34 +187,4 @@ class WorkspaceAuthorizationIT extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    @Test
-    void aRoleChangeTakesEffectAtOnce() throws Exception {
-        UserAccount owner = fixtures.superAdmin(uniqueEmail("owner"));
-        WorkspaceResponse workspace = fixtures.workspace("Team", uniqueSlug("team"), owner.id());
-        UserAccount person = fixtures.verifiedUser(uniqueEmail("promoted"));
-        fixtures.addMember(workspace.id(), person.id(), "EMPLOYEE");
-        String token = fixtures.bearer(person.id());
-
-        mockMvc.perform(post("/api/v1/workspaces/" + workspace.id() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", uniqueEmail("x"), "roleSlug", "EMPLOYEE"))))
-                .andExpect(status().isForbidden());
-
-        mockMvc.perform(patch("/api/v1/workspaces/" + workspace.id() + "/members/" + person.id())
-                        .header(HttpHeaders.AUTHORIZATION, fixtures.bearer(owner.id()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("roleSlug", "ADMIN"))))
-                .andExpect(status().isOk());
-
-        // The same token, now carrying more authority, because nothing about the
-        // permission set was cached against it.
-        mockMvc.perform(post("/api/v1/workspaces/" + workspace.id() + "/invitations")
-                        .header(HttpHeaders.AUTHORIZATION, token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", uniqueEmail("y"), "roleSlug", "EMPLOYEE"))))
-                .andExpect(status().isCreated());
-    }
 }

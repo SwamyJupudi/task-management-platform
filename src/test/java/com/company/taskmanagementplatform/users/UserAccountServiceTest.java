@@ -147,108 +147,85 @@ class UserAccountServiceTest {
     }
 
     @Test
-    void refusesAnUnverifiedAccountWithTheRightPassword() {
-        User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
-        knownAccount(pending);
+    void signsInAnAccountThatIsWaitingForApproval() {
+        // Deliberately not refused. Somebody who has just registered should be told
+        // that a person has to let them in, not given an answer indistinguishable
+        // from a wrong password. It grants them nothing: every workspace, project
+        // and task is reached through a membership they do not have yet.
+        User waiting = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+        knownAccount(waiting);
         when(encoder.matches(eq("right"), any())).thenReturn(true);
 
         assertThat(service.verifyCredentials("ada@example.com", "right").outcome())
-                .isEqualTo(CredentialCheck.Outcome.EMAIL_NOT_VERIFIED);
+                .isEqualTo(CredentialCheck.Outcome.SUCCESS);
     }
 
     @Test
-    void registrationStoresTheSameRowUnderEveryProfile() {
-        // The demo relaxation is applied on the read, not on the write, and it has
-        // to be: users_verified_when_active_check in V2 forbids an unconfirmed
-        // account from being ACTIVE, so promoting the status here is not a row the
-        // database will accept. Both configurations must produce the same one.
+    void registrationStartsInTheApprovalQueue() {
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
 
-        UserAccount required = service.register("ada@example.com", "password123", "Ada", "Lovelace");
-        UserAccount relaxed = demoService().register("grace@example.com", "password123", "Grace", "Hopper");
+        UserAccount registered = service.register("ada@example.com", "password123", "Ada", "Lovelace");
 
-        assertThat(required.status()).isEqualTo(UserStatus.PENDING_VERIFICATION);
-        assertThat(relaxed.status()).isEqualTo(UserStatus.PENDING_VERIFICATION);
-        assertThat(required.emailVerifiedAt()).isNull();
-        assertThat(relaxed.emailVerifiedAt()).isNull();
+        assertThat(registered.status()).isEqualTo(UserStatus.PENDING_APPROVAL);
+        // Confirming the address is no longer what lets somebody in, so nothing
+        // pretends it has happened.
+        assertThat(registered.emailVerifiedAt()).isNull();
     }
 
     @Test
-    void anUnverifiedAccountIsUsableOnlyWhereVerificationIsNotRequired() {
-        // What AccountStatusAdapter asks on every authenticated request, and so what
-        // decides whether the token a sign-in just issued is honoured. False under
-        // the strict reading is the 403 ACCOUNT_INACTIVE the demo was returning.
-        User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+    void aWaitingAccountIsUsableSoItsTokenIsHonoured() {
+        // What AccountStatusAdapter asks on every authenticated request. False here
+        // would mean a sign-in that works followed by a session that does not.
+        User waiting = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
 
-        assertThat(pending.isUsable()).isFalse();
-        assertThat(pending.isUsableWithoutVerification()).isTrue();
+        assertThat(waiting.isUsable()).isTrue();
     }
 
     @Test
-    void theRelaxedReadingStillRefusesADeactivatedAccount() {
-        // The relaxation is exactly one status wide. An administrator switching
-        // somebody off is as final under the demo profile as anywhere.
-        User deactivated = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+    void aDeactivatedAccountIsStillRefused() {
+        // The relaxation is exactly one status wide.
+        User deactivated = active("ada@example.com");
         deactivated.deactivate();
 
         assertThat(deactivated.isUsable()).isFalse();
-        assertThat(deactivated.isUsableWithoutVerification()).isFalse();
     }
 
     @Test
-    void aVerifiedAccountIsUsableUnderEitherReading() {
-        User verified = active("ada@example.com");
+    void approvingAWaitingAccountActivatesItAndRecordsTheApprover() {
+        User waiting = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+        knownAccount(waiting);
+        java.util.UUID approver = java.util.UUID.randomUUID();
 
-        assertThat(verified.isUsable()).isTrue();
-        assertThat(verified.isUsableWithoutVerification()).isTrue();
+        assertThat(service.approve(java.util.UUID.randomUUID(), approver)).isTrue();
+
+        assertThat(waiting.getStatus()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(waiting.getApprovedAt()).isEqualTo(NOW);
+        assertThat(waiting.getApprovedByUserId()).isEqualTo(approver);
+        verify(events).publishEvent(any(UserAdminEvents.Approved.class));
     }
 
     @Test
-    void signsInAnUnverifiedAccountWhereVerificationIsNotRequired() {
-        // The demo profile's setting, and the only thing it changes. Everything
-        // else about the outcome is what a confirmed account gets, which is why
-        // the check sits before the success path rather than in the caller.
-        UserAccountService demo = new UserAccountService(
-                repository,
-                new LoginFailureRecorder(repository),
-                encoder,
-                new PasswordPolicy(TestSecurityProperties.defaults()),
-                TestSecurityProperties.withoutEmailVerification(),
-                events,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+    void approvingAnAccountThatIsNotWaitingChangesNothing() {
+        // Two administrators working the same queue, or one pressing twice. The
+        // caller reads the boolean to know whether to add the membership.
+        User alreadyActive = active("ada@example.com");
+        knownAccount(alreadyActive);
 
-        User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
-        knownAccount(pending);
-        when(encoder.matches(eq("right"), any())).thenReturn(true);
-
-        assertThat(demo.verifyCredentials("ada@example.com", "right").outcome())
-                .isEqualTo(CredentialCheck.Outcome.SUCCESS);
-        // The address is still unconfirmed. Relaxing the sign-in requirement must
-        // not quietly mark it verified, or the verification flow would have
-        // nothing left to do and the account would misreport itself.
-        assertThat(pending.getEmailVerifiedAt()).isNull();
+        assertThat(service.approve(java.util.UUID.randomUUID(), java.util.UUID.randomUUID()))
+                .isFalse();
+        assertThat(alreadyActive.getStatus()).isEqualTo(UserStatus.ACTIVE);
     }
 
     @Test
-    void stillRefusesALockedOrInactiveAccountWhereVerificationIsNotRequired() {
-        // The relaxation is about one outcome only. A locked or switched-off
-        // account is refused under the demo profile exactly as it is anywhere.
-        UserAccountService demo = new UserAccountService(
-                repository,
-                new LoginFailureRecorder(repository),
-                encoder,
-                new PasswordPolicy(TestSecurityProperties.defaults()),
-                TestSecurityProperties.withoutEmailVerification(),
-                events,
-                Clock.fixed(NOW, ZoneOffset.UTC));
-
-        User deactivated = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+    void approvalCannotReviveADeactivatedAccount() {
+        // Switching somebody off stays a decision only activate() reverses.
+        User deactivated = active("ada@example.com");
         deactivated.deactivate();
         knownAccount(deactivated);
-        when(encoder.matches(eq("right"), any())).thenReturn(true);
 
-        assertThat(demo.verifyCredentials("ada@example.com", "right").outcome())
-                .isEqualTo(CredentialCheck.Outcome.INACTIVE);
+        assertThat(service.approve(java.util.UUID.randomUUID(), java.util.UUID.randomUUID()))
+                .isFalse();
+        assertThat(deactivated.getStatus()).isEqualTo(UserStatus.DEACTIVATED);
     }
 
     @Test
@@ -411,14 +388,16 @@ class UserAccountServiceTest {
     }
 
     @Test
-    void reactivatingAnUnverifiedAccountReturnsItToAwaitingVerification() {
+    void reactivatingAnUnapprovedAccountReturnsItToTheQueue() {
+        // Switching an account back on must not be a way of skipping the approval
+        // it never had.
         User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
         pending.deactivate();
         when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(pending));
 
         UserAccount reactivated = service.activate(java.util.UUID.randomUUID());
 
-        assertThat(reactivated.status()).isEqualTo(UserStatus.PENDING_VERIFICATION);
+        assertThat(reactivated.status()).isEqualTo(UserStatus.PENDING_APPROVAL);
     }
 
     // --- the guards the admin panel needs, phase nine -----------------------
@@ -536,23 +515,21 @@ class UserAccountServiceTest {
     private void knownAccount(User user) {
         when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
         when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(user));
+        // Approval reads the row under a write lock rather than through the
+        // ordinary finder, so the locking read has to answer too.
+        when(repository.findForApproval(any())).thenReturn(Optional.of(user));
     }
 
-    /** The demo profile's configuration: verification is not required. */
-    private UserAccountService demoService() {
-        return new UserAccountService(
-                repository,
-                new LoginFailureRecorder(repository),
-                encoder,
-                new PasswordPolicy(TestSecurityProperties.defaults()),
-                TestSecurityProperties.withoutEmailVerification(),
-                events,
-                Clock.fixed(NOW, ZoneOffset.UTC));
-    }
-
+    /**
+     * An account that may work: approved, not merely confirmed.
+     *
+     * <p>Confirming the address no longer activates anything, so this approves as well. Every test
+     * that needs somebody who can sign in and hold a membership goes through here.
+     */
     private User active(String email) {
         User user = User.register(email, "hashed:right", "Ada", "Lovelace", NOW);
         user.markEmailVerified(NOW);
+        user.approve(java.util.UUID.randomUUID(), NOW);
         return user;
     }
 

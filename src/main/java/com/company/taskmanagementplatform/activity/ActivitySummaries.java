@@ -47,6 +47,7 @@ final class ActivitySummaries {
             case ActivityActions.TASK_DEPENDENCY_ADDED -> "made it wait on another task";
             case ActivityActions.TASK_DEPENDENCY_REMOVED -> "removed a dependency";
             case ActivityActions.USER_PROFILE_UPDATED -> "edited an account's profile";
+            case ActivityActions.USER_APPROVED -> "approved an account";
             case ActivityActions.USER_ACTIVATED -> "switched an account back on";
             case ActivityActions.USER_DEACTIVATED -> "switched an account off";
             case ActivityActions.USER_DELETED -> "removed an account";

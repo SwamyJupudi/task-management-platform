@@ -54,7 +54,7 @@ class OpenApiContractIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/auth/password/change'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/users'].get").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/permissions'].get").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/invitations/accept'].post").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/workspaces/{workspaceId}/pending-users/{userId}/approve'].post").exists());
     }
 
     @Test

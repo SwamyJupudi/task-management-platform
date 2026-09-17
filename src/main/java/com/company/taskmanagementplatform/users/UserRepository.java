@@ -5,9 +5,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -119,5 +122,21 @@ interface UserRepository extends JpaRepository<User, UUID> {
      * Bulk lookup, so rendering a page of members costs one query rather than one per row. The
      * member roster is the first place that N+1 would have shown up.
      */
+    /**
+     * Reads an account for approval, holding a write lock on the row.
+     *
+     * <p>The lock is what makes double approval impossible. Two administrators working the queue at
+     * the same moment would otherwise both read {@code PENDING_APPROVAL}, both decide to proceed,
+     * and both grant a membership — leaving somebody approved into two workspaces that nobody chose
+     * together. With the lock the second transaction waits for the first to commit and then sees an
+     * account that is no longer pending, so {@link User#approve} returns false and the caller stops.
+     *
+     * <p>A plain read would not do: the check and the write have to be one step as far as any other
+     * transaction is concerned, and only the database can arrange that.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :userId AND u.deletedAt IS NULL")
+    Optional<User> findForApproval(@Param("userId") UUID userId);
+
     List<User> findAllByIdInAndDeletedAtIsNull(Collection<UUID> ids);
 }

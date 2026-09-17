@@ -45,9 +45,7 @@ class ProtectedRouteMatrixIT extends AbstractIntegrationTest {
             "POST /api/v1/auth/verify-email",
             "POST /api/v1/auth/verify-email/resend",
             "POST /api/v1/auth/password/forgot",
-            "POST /api/v1/auth/password/reset",
-            "GET /api/v1/invitations",
-            "POST /api/v1/invitations/accept");
+            "POST /api/v1/auth/password/reset");
 
     @Autowired
     private MockMvc mockMvc;

@@ -40,7 +40,7 @@ class AdminStatisticsIT extends AdminApiTestBase {
         SystemStatisticsResponse after = statistics(estate);
 
         assertThat(after.accounts().total() - before.accounts().total()).isEqualTo(2);
-        assertThat(delta(after, before, "PENDING_VERIFICATION")).isEqualTo(1);
+        assertThat(delta(after, before, "PENDING_APPROVAL")).isEqualTo(1);
         assertThat(delta(after, before, "ACTIVE")).isEqualTo(1);
 
         // Every status present, including one nobody may hold. A missing column
@@ -48,7 +48,7 @@ class AdminStatisticsIT extends AdminApiTestBase {
         // that vanished when its last holder changed would read as one that was
         // never there.
         assertThat(after.accounts().byStatus())
-                .containsKeys("PENDING_VERIFICATION", "ACTIVE", "DEACTIVATED");
+                .containsKeys("PENDING_APPROVAL", "ACTIVE", "DEACTIVATED");
     }
 
     @Test

@@ -12,10 +12,17 @@ package com.company.taskmanagementplatform.users;
  */
 public enum UserStatus {
 
-    /** Registered, not yet proved they own the address. Cannot sign in. */
-    PENDING_VERIFICATION,
+    /**
+     * Registered and waiting for an administrator.
+     *
+     * <p>Can sign in, and that is deliberate: somebody who has just registered should be able to see
+     * that the platform knows who they are and is waiting on somebody else, rather than being told
+     * their password is wrong. They reach their own account and nothing else -- every workspace,
+     * project and task is scoped to a membership they do not have yet.
+     */
+    PENDING_APPROVAL,
 
-    /** Verified and permitted to sign in. */
+    /** Approved by an administrator, and a member of at least one workspace. */
     ACTIVE,
 
     /** Switched off by an administrator. Existing sessions stop at the next request. */

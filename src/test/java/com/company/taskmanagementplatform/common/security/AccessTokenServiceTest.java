@@ -101,8 +101,7 @@ class AccessTokenServiceTest {
                 TestSecurityProperties.defaults().cookie(),
                 TestSecurityProperties.defaults().password(),
                 TestSecurityProperties.defaults().lockout(),
-                TestSecurityProperties.defaults().tokens(),
-                true);
+                TestSecurityProperties.defaults().tokens());
 
         String foreign = service(otherKey, NOW).issue(UUID.randomUUID()).value();
         AccessTokenService ours = service(TestSecurityProperties.defaults(), NOW);
@@ -122,8 +121,7 @@ class AccessTokenServiceTest {
                 TestSecurityProperties.defaults().cookie(),
                 TestSecurityProperties.defaults().password(),
                 TestSecurityProperties.defaults().lockout(),
-                TestSecurityProperties.defaults().tokens(),
-                true);
+                TestSecurityProperties.defaults().tokens());
 
         String foreign = service(otherAudience, NOW).issue(UUID.randomUUID()).value();
         AccessTokenService ours = service(TestSecurityProperties.defaults(), NOW);
@@ -142,8 +140,7 @@ class AccessTokenServiceTest {
                 TestSecurityProperties.defaults().cookie(),
                 TestSecurityProperties.defaults().password(),
                 TestSecurityProperties.defaults().lockout(),
-                TestSecurityProperties.defaults().tokens(),
-                true);
+                TestSecurityProperties.defaults().tokens());
 
         String foreign = service(otherIssuer, NOW).issue(UUID.randomUUID()).value();
         AccessTokenService ours = service(TestSecurityProperties.defaults(), NOW);
@@ -158,8 +155,7 @@ class AccessTokenServiceTest {
                 TestSecurityProperties.defaults().cookie(),
                 TestSecurityProperties.defaults().password(),
                 TestSecurityProperties.defaults().lockout(),
-                TestSecurityProperties.defaults().tokens(),
-                true);
+                TestSecurityProperties.defaults().tokens());
 
         assertThatThrownBy(() -> beans.jwtSigningKey(weak))
                 .isInstanceOf(IllegalStateException.class)
@@ -173,8 +169,7 @@ class AccessTokenServiceTest {
                 TestSecurityProperties.defaults().cookie(),
                 TestSecurityProperties.defaults().password(),
                 TestSecurityProperties.defaults().lockout(),
-                TestSecurityProperties.defaults().tokens(),
-                true);
+                TestSecurityProperties.defaults().tokens());
 
         assertThatThrownBy(() -> beans.jwtSigningKey(missing)).isInstanceOf(IllegalStateException.class);
     }

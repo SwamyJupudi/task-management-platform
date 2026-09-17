@@ -7,6 +7,7 @@
 
 export { AdminOverviewPage } from './pages/admin-overview-page'
 export { AccountsPage } from './pages/accounts-page'
+export { PendingUsersPage } from './pages/pending-users-page'
 export { RolesPage } from './pages/roles-page'
 export { AdminWorkspacesPage } from './pages/workspaces-page'
 export { PlatformActivityPage } from './pages/activity-page'

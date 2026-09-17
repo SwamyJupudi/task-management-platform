@@ -79,14 +79,14 @@ class RequestCompletionLogFilterTest {
 
     @Test
     void neverWritesTheQueryStringBecauseAnInvitationTokenTravelsInOne() throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/invitations");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/workspaces");
         request.setQueryString("token=a-live-single-use-credential");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         filter.doFilter(request, response, mock(FilterChain.class));
 
         assertThat(appender.messages().get(0))
-                .contains("path=/api/v1/invitations")
+                .contains("path=/api/v1/workspaces")
                 .doesNotContain("token")
                 .doesNotContain("a-live-single-use-credential");
     }

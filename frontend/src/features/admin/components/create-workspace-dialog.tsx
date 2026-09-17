@@ -1,5 +1,4 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { CircleCheckIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
@@ -16,9 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { FormError } from '@/features/auth'
-import { toUserMessage } from '@/lib/api'
 import { applyFieldErrors } from '@/lib/form'
-import { useSessionStore } from '@/stores/session-store'
 
 import { useWorkspaceMutations } from '../hooks'
 import { createWorkspaceSchema, suggestSlug, type CreateWorkspaceValues } from '../schemas'
@@ -34,11 +31,10 @@ import type { WorkspaceSummary } from '../types'
  * That is the backend's behaviour rather than an oversight on this side, and
  * hiding it would leave somebody clicking a link that cannot work.
  *
- * So the dialog has two steps. The first creates; the second offers the one
- * route in that uses an endpoint that already exists — invite your own address,
- * then accept the invitation from the link. Skipping it is fine: a platform
- * administrator can already administer the workspace from this panel without
- * being a member, and somebody else can be invited instead.
+ * That is not a problem to solve here. A platform administrator administers the
+ * workspace from this panel without belonging to it, and anybody who needs to
+ * work inside it is approved into it from the pending-users queue, which is
+ * where joining a workspace happens now.
  *
  * The slug is suggested from the name and stays editable. This is the only
  * moment it can be chosen — no endpoint changes one afterwards, because a slug
@@ -51,11 +47,9 @@ export function CreateWorkspaceDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { create, inviteSelf } = useWorkspaceMutations()
-  const email = useSessionStore((state) => state.user?.email ?? null)
+  const { create } = useWorkspaceMutations()
 
   const [created, setCreated] = useState<WorkspaceSummary | null>(null)
-  const [invited, setInvited] = useState(false)
 
   const {
     control,
@@ -89,7 +83,6 @@ export function CreateWorkspaceDialog({
     setTimeout(() => {
       reset({ name: '', slug: '' })
       setCreated(null)
-      setInvited(false)
     }, 150)
   }
 
@@ -120,41 +113,16 @@ export function CreateWorkspaceDialog({
               <AlertDescription>
                 <p>
                   Creating a workspace does not join it, so it will not appear in your workspace
-                  switcher. You can administer it from this panel either way. To work inside it,
-                  invite yourself and open the link in the invitation email.
+                  switcher. You can administer it from this panel either way. To put people in it,
+                  approve them into it from Pending users.
                 </p>
               </AlertDescription>
             </Alert>
-
-            {invited ? (
-              <Alert variant="success">
-                <CircleCheckIcon aria-hidden="true" />
-                <AlertTitle>Invitation sent</AlertTitle>
-                <AlertDescription>
-                  <p>
-                    Open the link sent to {email} to join {created.name}.
-                  </p>
-                </AlertDescription>
-              </Alert>
-            ) : null}
 
             <DialogFooter>
               <Button variant="outline" onClick={close}>
                 Done
               </Button>
-              {email && !invited ? (
-                <Button
-                  disabled={inviteSelf.isPending}
-                  onClick={() => {
-                    inviteSelf
-                      .mutateAsync({ workspaceId: created.id, email })
-                      .then(() => setInvited(true))
-                      .catch((error: unknown) => toast.error(toUserMessage(error)))
-                  }}
-                >
-                  {inviteSelf.isPending ? 'Inviting…' : 'Invite yourself'}
-                </Button>
-              ) : null}
             </DialogFooter>
           </>
         ) : (

@@ -49,17 +49,29 @@ public class IdentityFixtures {
         this.accessTokens = accessTokens;
     }
 
-    /** An account that has registered but not yet confirmed its address. Cannot sign in. */
+    /**
+     * An account that has registered and is waiting for an administrator.
+     *
+     * <p>It can sign in and reach its own account; it belongs to no workspace and so reaches no
+     * work. That is the state onboarding by approval leaves a new registration in.
+     */
     @Transactional
     public UserAccount pendingUser(String email) {
         return users.register(email, PASSWORD, "Test", "Person");
     }
 
-    /** An ordinary account that can sign in. */
+    /**
+     * An ordinary account that has been approved and may work.
+     *
+     * <p>Approved rather than merely confirmed. Confirming an address no longer activates anything —
+     * an administrator's approval is what does — so a fixture that only marked the address verified
+     * would hand back an account still sitting in the queue.
+     */
     @Transactional
     public UserAccount verifiedUser(String email) {
         UserAccount account = users.register(email, PASSWORD, "Test", "Person");
         users.markEmailVerified(account.id());
+        users.approve(account.id(), account.id());
         return users.findById(account.id()).orElseThrow();
     }
 

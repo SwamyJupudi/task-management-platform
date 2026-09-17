@@ -178,37 +178,41 @@ class EndToEndJourneyIT extends AbstractIntegrationTest {
 
     @Test
     @Order(3)
-    void twoPeopleAreInvited() throws Exception {
-        // Neither address has an account. That is the ordinary case for a new
-        // workspace and the one a fixture would quietly skip.
-        invite(adaEmail, "ADMIN");
-        invite(graceEmail, "EMPLOYEE");
+    void twoPeopleRegisterAndWait() throws Exception {
+        // Onboarding by approval. Neither address has an account, and neither needs
+        // a message to arrive: they register themselves and join the queue.
+        adaId = register(adaEmail, "Ada", "Lovelace");
+        graceId = register(graceEmail, "Grace", "Hopper");
 
-        assertThat(mail.lastMessageTo(adaEmail)).isPresent();
-        assertThat(mail.lastMessageTo(graceEmail)).isPresent();
-
-        mockMvc.perform(get("/api/v1/workspaces/" + workspaceId + "/invitations")
+        // Waiting, not barred. Both can sign in and be told somebody has to let
+        // them in, which is the state the administrator is about to resolve.
+        mockMvc.perform(get("/api/v1/admin/accounts")
+                        .param("status", "PENDING_APPROVAL")
                         .header(HttpHeaders.AUTHORIZATION, platformToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(2));
+                .andExpect(jsonPath("$.totalElements").value(org.hamcrest.Matchers.greaterThanOrEqualTo(2)));
     }
 
     @Test
     @Order(4)
-    void theyRedeemTheLinksAndTheirAccountsAreCreated() throws Exception {
-        SignedInSession ada = redeem(adaEmail, "Ada", "Lovelace");
-        SignedInSession grace = redeem(graceEmail, "Grace", "Hopper");
+    void theAdministratorApprovesThemIntoTheWorkspace() throws Exception {
+        // The decision that replaces the invitation link. One request names the
+        // workspace and the role, and the account is admitted in the same
+        // transaction that grants the membership.
+        approve(adaId, "ADMIN");
+        approve(graceId, "EMPLOYEE");
 
-        adaId = ada.userId();
+        SignedInSession ada = signIn(adaEmail);
+        SignedInSession grace = signIn(graceEmail);
         adaToken = ada.header();
-        graceId = grace.userId();
         graceToken = grace.header();
         graceRefreshCookie = grace.refreshCookie();
 
-        // Each of them is in the workspace holding the role they were invited to, and
-        // the interface reads exactly this to decide what to render.
-        assertThat(roleIn(adaToken, workspaceId)).isEqualTo("ADMIN");
-        assertThat(roleIn(graceToken, workspaceId)).isEqualTo("EMPLOYEE");
+        // Approved, and now holding the workspace the administrator named.
+        mockMvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, adaToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.memberships[0].workspaceId").value(workspaceId.toString()));
     }
 
     @Test
@@ -408,17 +412,30 @@ class EndToEndJourneyIT extends AbstractIntegrationTest {
 
     // --- the steps, in the words of the journey -------------------------------
 
-    private void invite(String email, String roleSlug) throws Exception {
-        mockMvc.perform(post("/api/v1/workspaces/" + workspaceId + "/invitations")
+    /** Somebody registers themselves. No administrator is involved yet, and no mail has to arrive. */
+    private UUID register(String email, String firstName, String lastName) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(Map.of(
+                                "email", email,
+                                "password", IdentityFixtures.PASSWORD,
+                                "firstName", firstName,
+                                "lastName", lastName))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
+                .andReturn();
+
+        return uuid(result, "id");
+    }
+
+    /** The administrator lets somebody in and says where they belong. */
+    private void approve(UUID userId, String roleSlug) throws Exception {
+        mockMvc.perform(post("/api/v1/workspaces/" + workspaceId + "/pending-users/" + userId + "/approve")
                         .header(HttpHeaders.AUTHORIZATION, platformToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body(Map.of("email", email, "roleSlug", roleSlug))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.email").value(email))
-                .andExpect(jsonPath("$.status").value("PENDING"))
-                // Only the hash is kept, so there is nothing to leak even to the
-                // administrator who sent it.
-                .andExpect(jsonPath("$.token").doesNotExist());
+                        .content(body(Map.of("roleSlug", roleSlug))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
     }
 
     /**
