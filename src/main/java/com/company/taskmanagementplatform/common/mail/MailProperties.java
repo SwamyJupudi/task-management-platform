@@ -16,9 +16,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *     reason {@code StorageProvider.LOCAL} is: a deployment that silently delivers nothing cannot
  *     verify an address, reset a password or complete an invitation, and nobody finds out until a
  *     real person is locked out of their own onboarding
- * @param from the envelope sender. Required when the provider is {@code SMTP} and checked at
- *     startup, because most providers reject a message with an unaccepted sender and that rejection
- *     would otherwise arrive at the first registration
+ * @param from the envelope sender. Required when the provider is {@code SMTP} or {@code HTTP} and
+ *     checked at startup, because most providers reject a message with an unaccepted sender and that
+ *     rejection would otherwise arrive at the first registration
  * @param fromName an optional display name shown beside the address
  * @param linkBaseUrl where the links in a message point, normally the frontend origin
  * @param logTokens whether the development transport may write a single-use token to the log. False
@@ -38,6 +38,13 @@ public record MailProperties(
         /** Writes what would have been sent to the log. Development and tests only. */
         LOG,
         /** Delivers over SMTP, through the {@code JavaMailSender} Spring Boot configures. */
-        SMTP
+        SMTP,
+        /**
+         * Delivers by posting to a provider's HTTP API, through {@link HttpMailSender}. Configured
+         * under {@code app.mail.http.*} rather than {@code spring.mail.*}, because none of SMTP's
+         * settings apply to it. Chosen where outbound mail ports are restricted or no static
+         * address exists to build a sender reputation on, which is the free-tier demo's situation.
+         */
+        HTTP
     }
 }

@@ -3,12 +3,18 @@ package com.company.taskmanagementplatform.common.mail;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.mock.env.MockEnvironment;
 
+import tools.jackson.databind.json.JsonMapper;
+
 /**
- * Which transport the configuration wires, and the two combinations it refuses.
+ * Which transport the configuration wires, and the combinations it refuses.
  *
  * <p>The refusals are the point. A production deployment that silently delivers nothing cannot
  * verify an address, reset a password or complete an invitation, and because verification is
@@ -23,14 +29,14 @@ class MailConfigTest {
     void developmentGetsTheLoggingTransport() {
         MockEnvironment environment = new MockEnvironment().withProperty("spring.profiles.active", "dev");
 
-        assertThat(config.mailSender(logging(), none(), environment)).isInstanceOf(LoggingMailSender.class);
+        assertThat(wire(logging(), noKey(), none(), environment)).isInstanceOf(LoggingMailSender.class);
     }
 
     @Test
     void productionRefusesToStartWithTheLoggingTransport() {
         MockEnvironment environment = new MockEnvironment().withProperty("spring.profiles.active", "prod");
 
-        assertThatThrownBy(() -> config.mailSender(logging(), none(), environment))
+        assertThatThrownBy(() -> wire(logging(), noKey(), none(), environment))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("delivers nothing")
                 .hasMessageContaining("MAIL_PROVIDER=SMTP");
@@ -43,7 +49,7 @@ class MailConfigTest {
         // has to be read from the property itself.
         MockEnvironment environment = new MockEnvironment().withProperty("spring.mail.host", "");
 
-        assertThatThrownBy(() -> config.mailSender(smtp("noreply@example.com"), none(), environment))
+        assertThatThrownBy(() -> wire(smtp("noreply@example.com"), noKey(), none(), environment))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("spring.mail.host is not set")
                 .hasMessageContaining("SMTP_HOST");
@@ -53,7 +59,7 @@ class MailConfigTest {
     void smtpWithoutASenderIsRefused() {
         MockEnvironment environment = new MockEnvironment().withProperty("spring.mail.host", "smtp.example.com");
 
-        assertThatThrownBy(() -> config.mailSender(smtp(""), available(), environment))
+        assertThatThrownBy(() -> wire(smtp(""), noKey(), available(), environment))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("app.mail.from is not set")
                 .hasMessageContaining("MAIL_FROM");
@@ -65,8 +71,81 @@ class MailConfigTest {
                 .withProperty("spring.profiles.active", "prod")
                 .withProperty("spring.mail.host", "smtp.example.com");
 
-        assertThat(config.mailSender(smtp("noreply@example.com"), available(), environment))
+        assertThat(wire(smtp("noreply@example.com"), noKey(), available(), environment))
                 .isInstanceOf(SmtpMailSender.class);
+    }
+
+    @Test
+    void httpWithoutAnApiKeyIsRefused() {
+        // Blank rather than absent, for the reason the host check is: the application's
+        // own defaults set app.mail.http.api-key to an empty string.
+        MockEnvironment environment = new MockEnvironment();
+
+        assertThatThrownBy(() -> wire(http("noreply@example.com"), noKey(), none(), environment))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("app.mail.http.api-key is not set")
+                .hasMessageContaining("MAIL_HTTP_API_KEY");
+    }
+
+    @Test
+    void httpWithoutASenderIsRefused() {
+        MockEnvironment environment = new MockEnvironment();
+
+        assertThatThrownBy(() -> wire(http(""), key(), none(), environment))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("app.mail.from is not set")
+                .hasMessageContaining("MAIL_FROM");
+    }
+
+    @Test
+    void aConfiguredHttpDeploymentGetsTheHttpTransport() {
+        // No JavaMailSender and no spring.mail.host: the HTTP transport shares none of
+        // SMTP's configuration, and a deployment that picked it has none of it set.
+        MockEnvironment environment = new MockEnvironment().withProperty("spring.profiles.active", "prod");
+
+        assertThat(wire(http("noreply@example.com"), key(), none(), environment)).isInstanceOf(HttpMailSender.class);
+    }
+
+    @Test
+    void theHttpProviderBindsFromConfigurationAndWiresThroughSpring() {
+        // The one assertion the direct calls above cannot make. They construct the
+        // arguments themselves, so they would still pass with HTTP missing from the
+        // enum or HttpMailProperties unregistered -- which is precisely the pair that
+        // failed a deployment: MAIL_PROVIDER=HTTP would not bind at all.
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(MailConfig.class))
+                .withBean(JsonMapper.class, () -> JsonMapper.builder().build())
+                .withPropertyValues(
+                        "app.mail.provider=HTTP",
+                        "app.mail.from=noreply@example.com",
+                        "app.mail.link-base-url=https://app.example.com",
+                        "app.mail.http.api-key=re_test")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(MailSender.class)).isInstanceOf(HttpMailSender.class);
+                });
+    }
+
+    private MailSender wire(
+            MailProperties mail,
+            HttpMailProperties http,
+            ObjectProvider<org.springframework.mail.javamail.JavaMailSender> transport,
+            MockEnvironment environment) {
+
+        return config.mailSender(mail, http, transport, JsonMapper.builder().build(), environment);
+    }
+
+    private static HttpMailProperties noKey() {
+        return new HttpMailProperties("https://api.resend.com/emails", "", Duration.ofSeconds(5), Duration.ofSeconds(10));
+    }
+
+    private static HttpMailProperties key() {
+        return new HttpMailProperties(
+                "https://api.resend.com/emails", "re_test", Duration.ofSeconds(5), Duration.ofSeconds(10));
+    }
+
+    private static MailProperties http(String from) {
+        return new MailProperties(MailProperties.Provider.HTTP, from, "", "https://app.example.com", false);
     }
 
     private static MailProperties logging() {

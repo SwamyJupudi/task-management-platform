@@ -81,6 +81,12 @@ serves the bundle, which is what keeps the session working.
    Any provider accepting the same body — `from`, `to`, `subject`, `text` — works
    by setting `MAIL_HTTP_URL` as well.
 
+   `MAIL_PROVIDER` does not need setting here: under this profile the key alone
+   selects the HTTP transport. Setting `MAIL_PROVIDER=HTTP` asks for it by name
+   instead, which works in any profile and makes `MAIL_HTTP_API_KEY` and
+   `MAIL_FROM` mandatory — startup fails without them rather than falling back to
+   the log.
+
    **Leave the key unset and the demo still works.** Verification and invitation
    links are written to the Render log with the token intact, and you complete
    either flow by copying one out. That is on in this profile alone, and `prod`
