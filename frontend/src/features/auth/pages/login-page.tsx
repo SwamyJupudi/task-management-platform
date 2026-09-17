@@ -3,13 +3,11 @@ import { useForm } from 'react-hook-form'
 import { Link } from 'react-router-dom'
 
 import { paths } from '@/app/routes/paths'
-import { Button } from '@/components/ui/button'
-import { ApiError } from '@/lib/api'
 
 import { AuthCard, SubmitButton } from '../components/auth-card'
 import { FormError } from '../components/form-error'
 import { PasswordField, TextField } from '../components/text-field'
-import { applyFieldErrors, useLogin, useResendVerification } from '../hooks'
+import { applyFieldErrors, useLogin } from '../hooks'
 import { loginSchema, type LoginValues } from '../schemas'
 
 /**
@@ -19,27 +17,25 @@ import { loginSchema, type LoginValues } from '../schemas'
  * store and `RequireAnonymous` moves the user on, to the page they originally
  * asked for when there was one.
  *
- * The one branch worth special handling is `EMAIL_NOT_VERIFIED`. The backend
- * returns it with a correct password, so the user has done nothing wrong and
- * telling them to check their email is useless if the message has expired.
- * That case gets a button that sends another one.
+ * There is no unverified-address branch any more. Confirming an address is not
+ * what lets somebody in -- an administrator's approval is -- so the backend no
+ * longer refuses a sign-in for it, and offering to send a verification message
+ * here would promise something that changes nothing. Somebody who has registered
+ * and not yet been approved signs in successfully and is shown that they are
+ * waiting.
  */
 export function LoginPage() {
   const login = useLogin()
-  const resend = useResendVerification()
 
   const {
     register,
     handleSubmit,
-    getValues,
     setError,
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: '', password: '' },
   })
-
-  const unverified = login.error instanceof ApiError && login.error.code === 'EMAIL_NOT_VERIFIED'
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -64,25 +60,6 @@ export function LoginPage() {
     >
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         <FormError error={login.error} title="Could not sign you in" />
-
-        {unverified ? (
-          resend.isSuccess ? (
-            <p className="text-sm text-muted-foreground">
-              A new verification message is on its way to that address.
-            </p>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full"
-              disabled={resend.isPending}
-              onClick={() => resend.mutate(getValues('email'))}
-            >
-              {resend.isPending ? 'Sending…' : 'Send another verification email'}
-            </Button>
-          )
-        ) : null}
 
         <TextField
           label="Email address"

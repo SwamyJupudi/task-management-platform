@@ -438,38 +438,6 @@ class EndToEndJourneyIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
     }
 
-    /**
-     * Opens the link, creates the account behind it, and signs in as it.
-     *
-     * <p>The preview is fetched with no bearer token on purpose: somebody who has never signed in has
-     * to be able to see what they are being asked to join.
-     */
-    private SignedInSession redeem(String email, String firstName, String lastName) throws Exception {
-        String token = mail.lastMessageTo(email)
-                .map(message -> message.variables().get("token"))
-                .orElseThrow(() -> new AssertionError("No invitation was sent to " + email));
-
-        mockMvc.perform(get("/api/v1/invitations").param("token", token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value(email))
-                .andExpect(jsonPath("$.accountExists").value(false));
-
-        mockMvc.perform(post("/api/v1/invitations/accept")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body(Map.of(
-                                "token", token,
-                                "password", IdentityFixtures.PASSWORD,
-                                "firstName", firstName,
-                                "lastName", lastName))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.workspaceId").value(workspaceId.toString()));
-
-        // Redeeming the token proved the address, so there is no separate
-        // verification step: signing in here is the assertion that the account is
-        // usable the moment it is created.
-        return signIn(email);
-    }
-
     private SignedInSession signIn(String email) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -53,9 +53,16 @@ public class RegistrationService {
         // the limit would only bound the successes.
         rateLimits.checkRegistration(email);
 
-        UserAccount account = users.register(email, password, firstName, lastName);
-        sendVerification(account.id(), account.email());
-        return account;
+        // No message is sent. Onboarding is by approval, so nothing about joining
+        // depends on mail arriving: the account is created PENDING_APPROVAL, can
+        // sign in immediately, and waits for an administrator. Sending a
+        // verification link here would tell somebody to go and read an inbox in
+        // order to finish something that reading it cannot finish.
+        //
+        // Confirming an address is still possible and still recorded --
+        // /auth/verify-email and the resend endpoint below are untouched -- it is
+        // simply no longer part of getting in.
+        return users.register(email, password, firstName, lastName);
     }
 
     @Transactional

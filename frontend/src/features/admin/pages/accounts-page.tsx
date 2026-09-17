@@ -119,7 +119,7 @@ export function AccountsPage() {
           description={
             filtered
               ? 'Nothing in the installation matches these filters.'
-              : 'Accounts appear here as people register or are invited.'
+              : 'Accounts appear here as people register.'
           }
         />
       ) : data ? (

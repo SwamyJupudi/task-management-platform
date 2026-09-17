@@ -51,7 +51,7 @@ class AuthenticationFlowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void registeringSendsAVerificationMessageAndIssuesNoTokens() throws Exception {
+    void registeringIssuesNoTokensAndSendsNoMessage() throws Exception {
         String email = uniqueEmail("register");
 
         mockMvc.perform(post("/api/v1/auth/register")
@@ -64,7 +64,11 @@ class AuthenticationFlowIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.accessToken").doesNotExist())
                 .andExpect(cookie().doesNotExist("refresh_token"));
 
-        assertThat(mail.lastToken(MailMessage.MailTemplate.EMAIL_VERIFICATION)).isPresent();
+        // And nothing is sent. Onboarding is by approval, so joining depends on an
+        // administrator rather than on a message arriving, and telling somebody to
+        // go and read an inbox would send them after something that cannot let them
+        // in.
+        assertThat(mail.countOf(MailMessage.MailTemplate.EMAIL_VERIFICATION)).isZero();
     }
 
     @Test
@@ -99,14 +103,17 @@ class AuthenticationFlowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void verifyingTheAddressAllowsSigningIn() throws Exception {
+    void confirmingAnAddressStillWorksAndIsStillRecorded() throws Exception {
+        // Kept for the people who want to confirm their address, and because the
+        // column is a useful record. It is no longer a gate: signing in worked
+        // before this ran and works after it, which is the point.
         String email = uniqueEmail("verify");
         mockMvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registration(email)))
                 .andExpect(status().isCreated());
 
-        String token = mail.lastToken(MailMessage.MailTemplate.EMAIL_VERIFICATION).orElseThrow();
+        String token = requestVerification(email);
 
         mockMvc.perform(post("/api/v1/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -127,7 +134,7 @@ class AuthenticationFlowIT extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registration(email)))
                 .andExpect(status().isCreated());
-        String token = mail.lastToken(MailMessage.MailTemplate.EMAIL_VERIFICATION).orElseThrow();
+        String token = requestVerification(email);
 
         mockMvc.perform(post("/api/v1/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -290,6 +297,24 @@ class AuthenticationFlowIT extends AbstractIntegrationTest {
                 .andExpect(status().isAccepted());
 
         assertThat(mail.countOf(MailMessage.MailTemplate.EMAIL_VERIFICATION)).isZero();
+    }
+
+    /**
+     * Asks for a verification message and reads the token out of it.
+     *
+     * <p>Registration no longer sends one, so a test that needs a verification token has to say so.
+     * That is the shape of the flow now: confirming an address is something somebody chooses to do,
+     * not a step they are pushed through on the way in.
+     */
+    private String requestVerification(String email) throws Exception {
+        mail.clear();
+
+        mockMvc.perform(post("/api/v1/auth/verify-email/resend")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(java.util.Map.of("email", email))))
+                .andExpect(status().isAccepted());
+
+        return mail.lastToken(MailMessage.MailTemplate.EMAIL_VERIFICATION).orElseThrow();
     }
 
     private Cookie signIn(String email) throws Exception {

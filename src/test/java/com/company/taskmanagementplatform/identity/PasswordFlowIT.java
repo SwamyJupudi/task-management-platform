@@ -147,6 +147,12 @@ class PasswordFlowIT extends AbstractIntegrationTest {
                                 "lastName", "Person"))))
                 .andExpect(status().isCreated());
 
+        // Asked for explicitly: registration no longer sends one.
+        mockMvc.perform(post("/api/v1/auth/verify-email/resend")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("email", email))))
+                .andExpect(status().isAccepted());
+
         String verification = mail.lastToken(MailMessage.MailTemplate.EMAIL_VERIFICATION).orElseThrow();
 
         mockMvc.perform(post("/api/v1/auth/password/reset")

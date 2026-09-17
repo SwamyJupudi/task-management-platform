@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { Link } from 'react-router-dom'
-import { MailCheckIcon } from 'lucide-react'
+import { HourglassIcon } from 'lucide-react'
 
 import { paths } from '@/app/routes/paths'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -10,23 +10,26 @@ import { Button } from '@/components/ui/button'
 import { AuthCard, SubmitButton } from '../components/auth-card'
 import { FormError } from '../components/form-error'
 import { PasswordField, TextField } from '../components/text-field'
-import { applyFieldErrors, useRegister, useResendVerification } from '../hooks'
+import { applyFieldErrors, useRegister } from '../hooks'
 import { registerSchema, type RegisterValues } from '../schemas'
 
 /**
  * Create an account.
  *
- * Registration issues no tokens. The backend creates the person, mails them a
- * verification link and stops, so the screen switches to a confirmation rather
- * than signing anybody in. Doing otherwise would claim an address is usable
- * before anybody has proved they can read mail sent to it.
+ * Registration issues no tokens and sends no mail. The backend creates the
+ * person in the approval queue and stops, so the screen switches to a
+ * confirmation rather than signing anybody in.
+ *
+ * What it says matters: nothing has been sent, and telling somebody to check
+ * their inbox would send them looking for a message that does not exist and
+ * could not let them in anyway. An administrator has to admit them, and that is
+ * what this says.
  *
  * `confirmPassword` never leaves the browser: it is a guard against a typo on
  * the one form whose value is never echoed back, and it is dropped here.
  */
 export function RegisterPage() {
   const createAccount = useRegister()
-  const resend = useResendVerification()
 
   const {
     register,
@@ -50,7 +53,7 @@ export function RegisterPage() {
     const address = createAccount.data.email
     return (
       <AuthCard
-        title="Check your email"
+        title="Your account is waiting for approval"
         footer={
           <Link to={paths.auth.login} className="font-medium text-foreground hover:underline">
             Back to sign in
@@ -58,35 +61,20 @@ export function RegisterPage() {
         }
       >
         <Alert variant="success">
-          <MailCheckIcon aria-hidden="true" />
+          <HourglassIcon aria-hidden="true" />
           <AlertTitle>Account created</AlertTitle>
           <AlertDescription>
             <p>
-              We sent a verification link to{' '}
-              <span className="font-medium text-foreground">{address}</span>. Open it to confirm the
-              address, then sign in.
+              <span className="font-medium text-foreground">{address}</span> is registered. An
+              administrator has to approve it and choose which workspace you join. You can sign in
+              now to check, and your work will appear once they do.
             </p>
           </AlertDescription>
         </Alert>
 
-        <div className="space-y-2">
-          <FormError error={resend.error} title="Could not resend the message" />
-          {resend.isSuccess ? (
-            <p className="text-center text-sm text-muted-foreground">
-              Another message is on its way.
-            </p>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              disabled={resend.isPending}
-              onClick={() => resend.mutate(address)}
-            >
-              {resend.isPending ? 'Sending…' : 'Resend the verification email'}
-            </Button>
-          )}
-        </div>
+        <Button asChild className="w-full">
+          <Link to={paths.auth.login}>Sign in</Link>
+        </Button>
       </AuthCard>
     )
   }
@@ -94,7 +82,7 @@ export function RegisterPage() {
   return (
     <AuthCard
       title="Create an account"
-      description="You will need to confirm your email address before signing in."
+      description="An administrator approves new accounts and chooses the workspace you join."
       footer={
         <>
           Already have an account?{' '}
