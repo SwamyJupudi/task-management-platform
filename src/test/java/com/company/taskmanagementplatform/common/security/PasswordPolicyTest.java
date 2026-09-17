@@ -70,6 +70,7 @@ class PasswordPolicyTest {
                 new SecurityProperties.Cookie("refresh_token", "/api/v1/auth", true, Duration.ofDays(14)),
                 new SecurityProperties.Password(minLength, maxBytes),
                 new SecurityProperties.Lockout(5, Duration.ofMinutes(15)),
-                new SecurityProperties.Tokens(Duration.ofHours(24), Duration.ofHours(1), Duration.ofDays(7)));
+                new SecurityProperties.Tokens(Duration.ofHours(24), Duration.ofHours(1), Duration.ofDays(7)),
+                true);
     }
 }

@@ -44,6 +44,7 @@ public class UserAccountService {
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicy passwordPolicy;
     private final SecurityProperties.Lockout lockout;
+    private final boolean requireEmailVerification;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
@@ -69,6 +70,7 @@ public class UserAccountService {
         this.passwordEncoder = passwordEncoder;
         this.passwordPolicy = passwordPolicy;
         this.lockout = securityProperties.lockout();
+        this.requireEmailVerification = securityProperties.requireEmailVerification();
         this.events = events;
         this.clock = clock;
         this.timingEqualisationHash = passwordEncoder.encode(UUID.randomUUID().toString());
@@ -147,7 +149,17 @@ public class UserAccountService {
         if (user.getStatus() == UserStatus.DEACTIVATED) {
             return new CredentialCheck(CredentialCheck.Outcome.INACTIVE, user.getId());
         }
-        if (user.getEmailVerifiedAt() == null) {
+        // Switched off by the demo profile alone, where mail may be going nowhere
+        // and refusing the sign-in that follows a registration would strand
+        // somebody on a confirmation link sitting in a log they are not reading.
+        // Nothing about verification is disabled by it: the token is still issued,
+        // the message is still sent, and confirming still works. The only question
+        // this answers is whether an unconfirmed address may sign in.
+        //
+        // Checked here rather than in AuthenticationService because the rest of a
+        // successful sign-in -- the last-login stamp and the cleared failure count
+        // below -- has to happen exactly as it does for a confirmed account.
+        if (requireEmailVerification && user.getEmailVerifiedAt() == null) {
             return new CredentialCheck(CredentialCheck.Outcome.EMAIL_NOT_VERIFIED, user.getId());
         }
 

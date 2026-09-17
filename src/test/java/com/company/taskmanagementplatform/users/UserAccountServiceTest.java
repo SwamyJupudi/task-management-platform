@@ -157,6 +157,54 @@ class UserAccountServiceTest {
     }
 
     @Test
+    void signsInAnUnverifiedAccountWhereVerificationIsNotRequired() {
+        // The demo profile's setting, and the only thing it changes. Everything
+        // else about the outcome is what a confirmed account gets, which is why
+        // the check sits before the success path rather than in the caller.
+        UserAccountService demo = new UserAccountService(
+                repository,
+                new LoginFailureRecorder(repository),
+                encoder,
+                new PasswordPolicy(TestSecurityProperties.defaults()),
+                TestSecurityProperties.withoutEmailVerification(),
+                events,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+        knownAccount(pending);
+        when(encoder.matches(eq("right"), any())).thenReturn(true);
+
+        assertThat(demo.verifyCredentials("ada@example.com", "right").outcome())
+                .isEqualTo(CredentialCheck.Outcome.SUCCESS);
+        // The address is still unconfirmed. Relaxing the sign-in requirement must
+        // not quietly mark it verified, or the verification flow would have
+        // nothing left to do and the account would misreport itself.
+        assertThat(pending.getEmailVerifiedAt()).isNull();
+    }
+
+    @Test
+    void stillRefusesALockedOrInactiveAccountWhereVerificationIsNotRequired() {
+        // The relaxation is about one outcome only. A locked or switched-off
+        // account is refused under the demo profile exactly as it is anywhere.
+        UserAccountService demo = new UserAccountService(
+                repository,
+                new LoginFailureRecorder(repository),
+                encoder,
+                new PasswordPolicy(TestSecurityProperties.defaults()),
+                TestSecurityProperties.withoutEmailVerification(),
+                events,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        User deactivated = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+        deactivated.deactivate();
+        knownAccount(deactivated);
+        when(encoder.matches(eq("right"), any())).thenReturn(true);
+
+        assertThat(demo.verifyCredentials("ada@example.com", "right").outcome())
+                .isEqualTo(CredentialCheck.Outcome.INACTIVE);
+    }
+
+    @Test
     void acceptsTheRightPasswordOnAnActiveAccount() {
         User user = active("ada@example.com");
         knownAccount(user);

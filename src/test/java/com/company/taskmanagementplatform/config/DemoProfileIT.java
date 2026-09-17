@@ -12,6 +12,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.company.taskmanagementplatform.attachments.FileStore;
+import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
 
 /**
@@ -55,6 +56,9 @@ class DemoProfileIT extends AbstractIntegrationTest {
     @Autowired
     private FileStore fileStore;
 
+    @Autowired
+    private SecurityProperties security;
+
     @Test
     void theProfileLoadsAndWiresTheDemoStore() {
         // LOCAL is refused under prod and is the default here. Reaching this line
@@ -92,6 +96,17 @@ class DemoProfileIT extends AbstractIntegrationTest {
                 .andExpect(header().string(
                         ResponseSecurityHeaders.CONTENT_SECURITY_POLICY_HEADER,
                         ResponseSecurityHeaders.APP_CONTENT_SECURITY_POLICY));
+    }
+
+    @Test
+    void thisProfileDoesNotRequireEmailVerificationToSignIn() {
+        // The relaxation this profile exists to make, asserted against the loaded
+        // properties rather than a literal: a demo whose mail may be going nowhere
+        // must not register an account and then refuse the sign-in that follows.
+        // Every other profile leaves it on, which application.properties defaults.
+        assertThat(security.requireEmailVerification())
+                .as("the demo profile relaxes email verification; no other profile does")
+                .isFalse();
     }
 
     @Test

@@ -3,15 +3,27 @@ package com.company.taskmanagementplatform.common.security;
 import java.time.Duration;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * Every tunable of the identity phase, in one place and supplied by the environment.
  *
  * <p>No value here has a hardcoded production default. The signing secret in particular is required,
  * so an environment that forgets it fails at startup instead of running on something guessable.
+ *
+ * @param requireEmailVerification whether an address must be confirmed before its account may sign
+ *     in. True everywhere except the demo profile, which explains at length why it relaxes it.
+ *     Defaulted rather than required, because the safe answer is the one a forgotten setting should
+ *     produce; the demo has to say so explicitly to get the other one.
  */
 @ConfigurationProperties(prefix = "app.security")
-public record SecurityProperties(Jwt jwt, Cookie cookie, Password password, Lockout lockout, Tokens tokens) {
+public record SecurityProperties(
+        Jwt jwt,
+        Cookie cookie,
+        Password password,
+        Lockout lockout,
+        Tokens tokens,
+        @DefaultValue("true") boolean requireEmailVerification) {
 
     /**
      * @param issuer written into and checked on every access token
