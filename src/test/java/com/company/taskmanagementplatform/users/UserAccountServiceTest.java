@@ -157,6 +157,53 @@ class UserAccountServiceTest {
     }
 
     @Test
+    void registrationStoresTheSameRowUnderEveryProfile() {
+        // The demo relaxation is applied on the read, not on the write, and it has
+        // to be: users_verified_when_active_check in V2 forbids an unconfirmed
+        // account from being ACTIVE, so promoting the status here is not a row the
+        // database will accept. Both configurations must produce the same one.
+        when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+        UserAccount required = service.register("ada@example.com", "password123", "Ada", "Lovelace");
+        UserAccount relaxed = demoService().register("grace@example.com", "password123", "Grace", "Hopper");
+
+        assertThat(required.status()).isEqualTo(UserStatus.PENDING_VERIFICATION);
+        assertThat(relaxed.status()).isEqualTo(UserStatus.PENDING_VERIFICATION);
+        assertThat(required.emailVerifiedAt()).isNull();
+        assertThat(relaxed.emailVerifiedAt()).isNull();
+    }
+
+    @Test
+    void anUnverifiedAccountIsUsableOnlyWhereVerificationIsNotRequired() {
+        // What AccountStatusAdapter asks on every authenticated request, and so what
+        // decides whether the token a sign-in just issued is honoured. False under
+        // the strict reading is the 403 ACCOUNT_INACTIVE the demo was returning.
+        User pending = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+
+        assertThat(pending.isUsable()).isFalse();
+        assertThat(pending.isUsableWithoutVerification()).isTrue();
+    }
+
+    @Test
+    void theRelaxedReadingStillRefusesADeactivatedAccount() {
+        // The relaxation is exactly one status wide. An administrator switching
+        // somebody off is as final under the demo profile as anywhere.
+        User deactivated = User.register("ada@example.com", "hash", "Ada", "Lovelace", NOW);
+        deactivated.deactivate();
+
+        assertThat(deactivated.isUsable()).isFalse();
+        assertThat(deactivated.isUsableWithoutVerification()).isFalse();
+    }
+
+    @Test
+    void aVerifiedAccountIsUsableUnderEitherReading() {
+        User verified = active("ada@example.com");
+
+        assertThat(verified.isUsable()).isTrue();
+        assertThat(verified.isUsableWithoutVerification()).isTrue();
+    }
+
+    @Test
     void signsInAnUnverifiedAccountWhereVerificationIsNotRequired() {
         // The demo profile's setting, and the only thing it changes. Everything
         // else about the outcome is what a confirmed account gets, which is why
@@ -489,6 +536,18 @@ class UserAccountServiceTest {
     private void knownAccount(User user) {
         when(repository.findByEmailAndDeletedAtIsNull(anyString())).thenReturn(Optional.of(user));
         when(repository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.of(user));
+    }
+
+    /** The demo profile's configuration: verification is not required. */
+    private UserAccountService demoService() {
+        return new UserAccountService(
+                repository,
+                new LoginFailureRecorder(repository),
+                encoder,
+                new PasswordPolicy(TestSecurityProperties.defaults()),
+                TestSecurityProperties.withoutEmailVerification(),
+                events,
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private User active(String email) {

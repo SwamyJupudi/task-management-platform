@@ -246,6 +246,24 @@ class User {
         return deletedAt == null && status == UserStatus.ACTIVE;
     }
 
+    /**
+     * The same question where an unconfirmed address is allowed to sign in -- the demo profile alone.
+     *
+     * <p>Widening what counts as usable, rather than changing what is stored, and that is the whole
+     * design. The database will not hold an unconfirmed account in {@code ACTIVE}: {@code
+     * users_verified_when_active_check} in {@code V2__identity.sql} says {@code status <> 'ACTIVE' OR
+     * email_verified_at IS NOT NULL}. That invariant belongs to production and stays, so promoting
+     * the status was never expressible -- the insert is rejected outright. A registration under this
+     * profile therefore writes exactly the row an ordinary one writes, and only the reading of it
+     * differs.
+     *
+     * <p>{@code DEACTIVATED} and a removed account are still excluded, so an administrator switching
+     * somebody off is as final here as anywhere, and so is a deletion.
+     */
+    boolean isUsableWithoutVerification() {
+        return deletedAt == null && (status == UserStatus.ACTIVE || status == UserStatus.PENDING_VERIFICATION);
+    }
+
     UUID getId() {
         return id;
     }

@@ -2,18 +2,26 @@ package com.company.taskmanagementplatform.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import com.company.taskmanagementplatform.attachments.FileStore;
 import com.company.taskmanagementplatform.common.security.SecurityProperties;
 import com.company.taskmanagementplatform.support.AbstractIntegrationTest;
+import com.jayway.jsonpath.JsonPath;
+
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * That the demo profile starts, and that nothing it relaxes is a security control.
@@ -59,6 +67,9 @@ class DemoProfileIT extends AbstractIntegrationTest {
     @Autowired
     private SecurityProperties security;
 
+    @Autowired
+    private JsonMapper json;
+
     @Test
     void theProfileLoadsAndWiresTheDemoStore() {
         // LOCAL is refused under prod and is the default here. Reaching this line
@@ -96,6 +107,46 @@ class DemoProfileIT extends AbstractIntegrationTest {
                 .andExpect(header().string(
                         ResponseSecurityHeaders.CONTENT_SECURITY_POLICY_HEADER,
                         ResponseSecurityHeaders.APP_CONTENT_SECURITY_POLICY));
+    }
+
+    @Test
+    void aNewRegistrationSignsInAndItsTokenIsAccepted() throws Exception {
+        // The whole point of the relaxation, end to end, and the regression it was
+        // shipped broken with. Relaxing only the sign-in check left this profile
+        // worse off than before: /auth/login answered 200, and every request made
+        // with the token it issued was refused ACCOUNT_INACTIVE by the
+        // authentication filter -- because registration left the account
+        // PENDING_VERIFICATION and isUsable() reads the status, not the timestamp.
+        String email = uniqueEmail("demo-unverified");
+        String password = "correct-horse-battery";
+
+        mockMvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(java.util.Map.of(
+                                "email", email,
+                                "password", password,
+                                "firstName", "Ada",
+                                "lastName", "Lovelace"))))
+                .andExpect(status().isCreated())
+                // Unconfirmed, and it stays that way. Only the status moves; the
+                // address has not been proved and the relaxation must not pretend it
+                // has, or the verification flow would have nothing left to do.
+                .andExpect(jsonPath("$.emailVerified").value(false));
+
+        MvcResult signIn = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(java.util.Map.of("email", email, "password", password))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andReturn();
+
+        String accessToken = JsonPath.read(signIn.getResponse().getContentAsString(), "$.accessToken");
+
+        // The assertion that was failing in the deployed demo, as a 403.
+        mockMvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.email").value(email))
+                .andExpect(jsonPath("$.user.emailVerified").value(false));
     }
 
     @Test

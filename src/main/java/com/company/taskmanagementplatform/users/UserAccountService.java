@@ -86,6 +86,10 @@ public class UserAccountService {
     /**
      * Creates an account.
      *
+     * <p>Registration is the same under every profile, including the demo one. Where an unconfirmed
+     * address is permitted to sign in, the relaxation is applied when the account is <em>read</em> --
+     * see {@code AccountStatusAdapter} -- rather than by writing a different row here.
+     *
      * @param alreadyVerified true only when the address was proved some other way. Accepting an
      *     invitation is the one case: the token was delivered to that address and nothing else, so
      *     redeeming it demonstrates the same thing a verification message would, and sending a second
