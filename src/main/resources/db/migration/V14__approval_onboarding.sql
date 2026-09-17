@@ -19,9 +19,21 @@
 -- leaving them there would mean an account nobody can act on: no administrator
 -- screen lists it, and confirming the address would no longer be enough to sign
 -- in. They are exactly the people the new flow is for, so they join its queue.
+--
+-- ORDER MATTERS, AND GETTING IT WRONG IS SILENT ON AN EMPTY DATABASE.
+--
+-- The constraint is dropped BEFORE the rows are rewritten. The old one permits
+-- only PENDING_VERIFICATION, ACTIVE and DEACTIVATED, so an UPDATE that writes
+-- PENDING_APPROVAL while it is still in force is refused with 23514 -- and a
+-- migration run against a fresh database never notices, because there are no
+-- rows to rewrite and the UPDATE touches nothing. Only an installation with
+-- real users fails, which is the worst place to find out.
+ALTER TABLE users DROP CONSTRAINT users_status_check;
+
 UPDATE users SET status = 'PENDING_APPROVAL' WHERE status = 'PENDING_VERIFICATION';
 
-ALTER TABLE users DROP CONSTRAINT users_status_check;
+-- Added after the rewrite, so it is checked against rows that already satisfy
+-- it rather than against the ones being replaced.
 ALTER TABLE users
     ADD CONSTRAINT users_status_check
         CHECK (status IN ('PENDING_APPROVAL', 'ACTIVE', 'DEACTIVATED'));
